@@ -10,50 +10,103 @@ const upload=multer({dest:path.join(os.tmpdir(),"sheetnest-uploads"),limits:{fil
 app.use(express.json({limit:"2mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
+const EPS=0.01;
 function num(value,fallback=0){const n=Number(value);return Number.isFinite(n)?n:fallback}
-
-function boundsForEntity(entity,b){
-  const add=(x,y)=>{if(!Number.isFinite(x)||!Number.isFinite(y))return;b.minX=Math.min(b.minX,x);b.maxX=Math.max(b.maxX,x);b.minY=Math.min(b.minY,y);b.maxY=Math.max(b.maxY,y)};
-  const type=String(entity.type||"").toUpperCase();
-  if(type==="LINE")(entity.vertices||[]).forEach(v=>add(num(v.x),num(v.y)));
-  else if(type==="LWPOLYLINE"||type==="POLYLINE")(entity.vertices||[]).forEach(v=>add(num(v.x),num(v.y)));
-  else if(type==="CIRCLE"){const cx=num(entity.center?.x),cy=num(entity.center?.y),r=Math.abs(num(entity.radius));add(cx-r,cy-r);add(cx+r,cy+r)}
-  else if(type==="ARC"){
-    const cx=num(entity.center?.x),cy=num(entity.center?.y),r=Math.abs(num(entity.radius)),start=num(entity.startAngle),end=num(entity.endAngle),norm=a=>((a%360)+360)%360;
-    const s=norm(start),e=norm(end),inside=a=>{const x=norm(a);return s<=e?x>=s&&x<=e:x>=s||x<=e};
-    for(const a of [start,end,0,90,180,270])if(inside(a)){const rad=a*Math.PI/180;add(cx+r*Math.cos(rad),cy+r*Math.sin(rad))}
-  }
-}
-
-function pointsToPath(points,close=false){
+function point(x,y){return{x:num(x),y:num(y)}}
+function same(a,b){return Math.hypot(a.x-b.x,a.y-b.y)<=EPS}
+function dPoint(p){return `${p.x} ${-p.y}`}
+function pathFromPoints(points,close=true){
   if(!points||points.length<2)return "";
-  let d=`M ${num(points[0].x)} ${-num(points[0].y)}`;
-  for(let i=1;i<points.length;i++)d+=` L ${num(points[i].x)} ${-num(points[i].y)}`;
-  if(close)d+=" Z";return d;
+  let d=`M ${dPoint(points[0])}`;
+  for(let i=1;i<points.length;i++)d+=` L ${dPoint(points[i])}`;
+  if(close)d+=" Z";
+  return d;
 }
-function entityToSvg(entity){
-  const type=String(entity.type||"").toUpperCase();
-  if(type==="LINE")return`<line x1="${num(entity.vertices?.[0]?.x)}" y1="${-num(entity.vertices?.[0]?.y)}" x2="${num(entity.vertices?.[1]?.x)}" y2="${-num(entity.vertices?.[1]?.y)}" />`;
-  if(type==="LWPOLYLINE"||type==="POLYLINE"){const vertices=entity.vertices||[];return`<path d="${pointsToPath(vertices,Boolean(entity.shape||entity.closed))}" />`}
-  if(type==="CIRCLE")return`<circle cx="${num(entity.center?.x)}" cy="${-num(entity.center?.y)}" r="${Math.abs(num(entity.radius))}" />`;
-  if(type==="ARC"){const c=entity.center||{},r=Math.abs(num(entity.radius)),a0=num(entity.startAngle)*Math.PI/180,a1=num(entity.endAngle)*Math.PI/180,x0=num(c.x)+r*Math.cos(a0),y0=-(num(c.y)+r*Math.sin(a0)),x1=num(c.x)+r*Math.cos(a1),y1=-(num(c.y)+r*Math.sin(a1));let delta=(num(entity.endAngle)-num(entity.startAngle))%360;if(delta<0)delta+=360;const large=delta>180?1:0;return`<path d="M ${x0} ${y0} A ${r} ${r} 0 ${large} 0 ${x1} ${y1}" />`}
-  return "";
+function collectDxfContours(dxf){
+  const closed=[], open=[], segments=[];
+  for(const e of (dxf.entities||[])){
+    const type=String(e.type||"").toUpperCase();
+    if(type==="LWPOLYLINE"||type==="POLYLINE"){
+      const pts=(e.vertices||[]).map(v=>point(v.x,v.y));
+      if(pts.length>=2){
+        const isClosed=Boolean(e.shape||e.closed);
+        if(isClosed){closed.push(pts)}
+        else{open.push(pts)}
+      }
+      continue;
+    }
+    if(type==="LINE"){
+      const a=e.vertices?.[0],b=e.vertices?.[1];
+      if(a&&b)segments.push({a:point(a.x,a.y),b:point(b.x,b.y)});
+      continue;
+    }
+    if(type==="CIRCLE"){
+      const cx=num(e.center?.x),cy=num(e.center?.y),r=Math.abs(num(e.radius));
+      const steps=Math.max(24,Math.ceil(2*Math.PI*Math.max(r,1)/2));
+      const pts=[];for(let i=0;i<steps;i++){const t=2*Math.PI*i/steps;pts.push(point(cx+r*Math.cos(t),cy+r*Math.sin(t)))}
+      closed.push(pts);continue;
+    }
+    if(type==="ARC"){
+      const cx=num(e.center?.x),cy=num(e.center?.y),r=Math.abs(num(e.radius));
+      let a0=num(e.startAngle),a1=num(e.endAngle);let delta=(a1-a0)%360;if(delta<0)delta+=360;
+      const steps=Math.max(8,Math.ceil(delta/5));const pts=[];
+      for(let i=0;i<=steps;i++){const a=(a0+delta*i/steps)*Math.PI/180;pts.push(point(cx+r*Math.cos(a),cy+r*Math.sin(a)))}
+      open.push(pts);
+    }
+  }
+
+  // Stitch LINE entities that share endpoints into continuous contours.
+  while(segments.length){
+    const seed=segments.pop();
+    let chain=[seed.a,seed.b],extended=true;
+    while(extended){
+      extended=false;
+      for(let i=segments.length-1;i>=0;i--){
+        const s=segments[i];
+        if(same(chain[chain.length-1],s.a)){chain.push(s.b);segments.splice(i,1);extended=true;break}
+        if(same(chain[chain.length-1],s.b)){chain.push(s.a);segments.splice(i,1);extended=true;break}
+        if(same(chain[0],s.b)){chain.unshift(s.a);segments.splice(i,1);extended=true;break}
+        if(same(chain[0],s.a)){chain.unshift(s.b);segments.splice(i,1);extended=true;break}
+      }
+    }
+    if(chain.length>=3&&same(chain[0],chain[chain.length-1])){
+      chain.pop();closed.push(chain)
+    }else open.push(chain)
+  }
+
+  return {closed,open};
 }
 
+function getBounds(contours){
+  const b={minX:Infinity,maxX:-Infinity,minY:Infinity,maxY:-Infinity};
+  const add=p=>{b.minX=Math.min(b.minX,p.x);b.maxX=Math.max(b.maxX,p.x);b.minY=Math.min(b.minY,p.y);b.maxY=Math.max(b.maxY,p.y)};
+  contours.forEach(c=>c.forEach(add));
+  return b;
+}
 function dxfToSvg(dxf){
-  const entities=Array.isArray(dxf.entities)?dxf.entities:[],b={minX:Infinity,maxX:-Infinity,minY:Infinity,maxY:-Infinity};
-  entities.forEach(e=>boundsForEntity(e,b));
-  if(!Number.isFinite(b.minX))throw new Error("В DXF не найдена геометрия.");
-  const padding=1,minX=b.minX-padding,maxX=b.maxX+padding,minY=b.minY-padding,maxY=b.maxY+padding,width=Math.max(1,maxX-minX),height=Math.max(1,maxY-minY);
-  const parts=entities.map(entityToSvg).filter(Boolean),translated=`<g transform="translate(${-minX} ${maxY})">${parts.join("")}</g>`;
-  return`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"><g fill="none" stroke="black" stroke-width="0.2">${translated}</g></svg>`;
+  const data=collectDxfContours(dxf);
+  if(!data.closed.length)throw new Error("В DXF не найден замкнутый контур детали.");
+  const b=getBounds(data.closed),padding=1,minX=b.minX-padding,maxY=b.maxY+padding;
+  const width=Math.max(1,b.maxX-b.minX+2*padding),height=Math.max(1,b.maxY-b.minY+2*padding);
+  const paths=data.closed.map(c=>`<path d="${pathFromPoints(c,true)}" />`).join("");
+  const open=data.open.map(c=>`<path d="${pathFromPoints(c,false)}" data-open="true" />`).join("");
+  const content=`<g transform="translate(${-minX} ${maxY})">${paths}${open}</g>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-contours="${data.closed.length}" data-open="${data.open.length}"><g fill="none" stroke="black" stroke-width="0.2">${content}</g></svg>`;
 }
 
 app.post("/api/import/dxf",upload.single("file"),(req,res)=>{
   if(!req.file)return res.status(400).json({error:"Файл не передан"});
-  try{const source=fs.readFileSync(req.file.path,"utf8"),dxf=new DxfParser().parseSync(source);res.json({format:"dxf",svg:dxfToSvg(dxf)})}
-  catch(err){res.status(422).json({error:`Не удалось разобрать DXF: ${err.message}`})}
-  finally{fs.rm(req.file.path,{force:true},()=>{})}
+  try{
+    const source=fs.readFileSync(req.file.path,"utf8");
+    const dxf=new DxfParser().parseSync(source);
+    const svg=dxfToSvg(dxf);
+    const root=svg.match(/<svg[^>]*>/)?.[0]||"";
+    const contours=Number(root.match(/data-contours="(\d+)"/)?.[1]||0);
+    const open=Number(root.match(/data-open="(\d+)"/)?.[1]||0);
+    res.json({format:"dxf",svg,contours,open});
+  }catch(err){
+    res.status(422).json({error:`Не удалось разобрать DXF: ${err.message}`});
+  }finally{fs.rm(req.file.path,{force:true},()=>{})}
 });
 
 app.get("/api/health",(_req,res)=>res.json({ok:true}));
