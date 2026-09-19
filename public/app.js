@@ -236,6 +236,57 @@ function decorateResultSvg(svg,meta,sheetIndex){
   const dimV=document.createElementNS(ns,"text");dimV.setAttribute("x","7");dimV.setAttribute("y",meta.sheetH/2);dimV.setAttribute("text-anchor","middle");dimV.setAttribute("font-size","6");dimV.setAttribute("font-family","Arial,sans-serif");dimV.setAttribute("fill","#4d5863");dimV.setAttribute("transform",`rotate(-90 7 ${meta.sheetH/2})`);dimV.textContent=`${meta.sheetH} мм`;svg.appendChild(dimV);
 }
 
+const CANVAS_ZOOM_MIN=.25,CANVAS_ZOOM_MAX=4,CANVAS_ZOOM_STEP=.25;
+function clampCanvasZoom(value){return Math.max(CANVAS_ZOOM_MIN,Math.min(CANVAS_ZOOM_MAX,value))}
+function updateCanvasZoomUi(){
+  const value=$( "zoomFit" );
+  if(value)value.textContent=Math.round(state.canvasZoom*100)+"%";
+}
+function applyCanvasZoom(){
+  const zoom=state.canvasZoom;
+  document.querySelectorAll("#canvasWrap .result-card").forEach(card=>{
+    card.style.width=(zoom*100)+"%";
+    card.style.minWidth="0";
+  });
+  updateCanvasZoomUi();
+}
+function setCanvasZoom(nextZoom,clientX=null,clientY=null){
+  const wrap=$( "canvasWrap" );
+  if(!wrap)return;
+  const oldZoom=state.canvasZoom;
+  const zoom=clampCanvasZoom(nextZoom);
+  if(Math.abs(zoom-oldZoom)<.001)return;
+  const rect=wrap.getBoundingClientRect();
+  const pointerX=clientX==null?rect.width/2:clientX-rect.left;
+  const pointerY=clientY==null?rect.height/2:clientY-rect.top;
+  const anchorX=wrap.scrollLeft+pointerX;
+  const anchorY=wrap.scrollTop+pointerY;
+  state.canvasZoom=zoom;
+  applyCanvasZoom();
+  requestAnimationFrame(()=>{
+    wrap.scrollLeft=Math.max(0,anchorX*(zoom/oldZoom)-pointerX);
+    wrap.scrollTop=Math.max(0,anchorY*(zoom/oldZoom)-pointerY);
+  });
+}
+function resetCanvasZoom(){setCanvasZoom(1)}
+function fitCanvasZoom(){setCanvasZoom(1)}
+function setupCanvasZoom(){
+  const wrap=$( "canvasWrap" );
+  if(!wrap)return;
+  $( "zoomOut" )?.addEventListener("click",()=>setCanvasZoom(state.canvasZoom-CANVAS_ZOOM_STEP));
+  $( "zoomIn" )?.addEventListener("click",()=>setCanvasZoom(state.canvasZoom+CANVAS_ZOOM_STEP));
+  $( "zoomFit" )?.addEventListener("click",fitCanvasZoom);
+  $( "zoomReset" )?.addEventListener("click",resetCanvasZoom);
+  wrap.addEventListener("wheel",event=>{
+    if(!document.querySelector("#canvasWrap .result-card"))return;
+    event.preventDefault();
+    const direction=event.deltaY<0?1:-1;
+    const factor=Math.pow(1.2,direction);
+    setCanvasZoom(state.canvasZoom*factor,event.clientX,event.clientY);
+  },{passive:false});
+  updateCanvasZoomUi();
+}
+
 function renderResults(svgList,efficiency,placed,total,sheet){
   const wrap=$("canvasWrap");wrap.innerHTML="";
   const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:sheet.w,sheetH:sheet.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(efficiency||0),placed:Number(placed||0),total:Number(total||0)};
@@ -253,7 +304,7 @@ function renderResults(svgList,efficiency,placed,total,sheet){
     card.appendChild(summary);wrap.appendChild(card);
   });
 
-  $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0;
+  $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0;applyCanvasZoom();
 }
 
 function updateProgress(){
@@ -308,4 +359,4 @@ $("stopButton").addEventListener("click",()=>{state.running=false;try{SvgNest.st
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);decorateResultSvg(clone,state.resultMeta,index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
-updateSheetPreview();
+setupCanvasZoom();updateSheetPreview();
