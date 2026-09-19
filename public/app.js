@@ -90,6 +90,7 @@ function updateGeometryInfo(){
   if(state.customParts.length)bits.push(...state.customParts.map(part=>part.name+" × "+part.quantity));
   if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);return (shape?shape.name:part.id)+" × "+part.quantity;}));
   if(fileLine)fileLine.textContent=state.customParts.length?state.customParts.length+" CAD-файл(ов): "+state.customParts.map(part=>part.name).join(", "):"Файл не выбран";
+  const partsTotal=$("partsTotal");if(partsTotal)partsTotal.textContent=requestedPartCount();
   if(!bits.length){chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";return;}
   chip.innerHTML="<span class=\"chip-dot\"></span><span>"+escapeHtml(bits.join(" · "))+"</span>";
 }
