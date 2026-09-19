@@ -62,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
             "--no-sandbox",
             "--disable-gpu",
             "--disable-dev-shm-usage",
+            "--host-resolver-rules=MAP * 0.0.0.0,EXCLUDE localhost",
             "--remote-allow-origins=*",
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}",
