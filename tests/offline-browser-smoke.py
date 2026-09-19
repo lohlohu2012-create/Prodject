@@ -85,12 +85,11 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
             raise RuntimeError("Chromium remote debugging did not start")
 
         ws = websocket.create_connection(version["webSocketDebuggerUrl"], timeout=5)
-        counter = 0
+        counter = [0]
 
         def cdp(method, params=None, wait=True):
-            nonlocal counter
-            counter += 1
-            ident = counter
+            counter[0] += 1
+            ident = counter[0]
             ws.send(json.dumps({"id": ident, "method": method, "params": params or {}}))
             if not wait:
                 return None
