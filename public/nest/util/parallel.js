@@ -6,7 +6,22 @@
 	};
 	var Worker = isNode ? require(__dirname + '/Worker.js') : root.Worker;
 	var URL = typeof root !== 'undefined' ? (root.URL ? root.URL : root.webkitURL) : null;
+	var globalObject = (!isNode && root.global) ? root.global : root;
+	if (!isNode && !root.global) root.global = globalObject;
+	var localFile = !isNode && root.location && root.location.protocol === 'file:';
 	var _supports = (isNode || root.Worker) ? true : false; // node always supports parallel
+
+	function runSynchronously(cb, data, env, envName) {
+		var hadEnv = Object.prototype.hasOwnProperty.call(globalObject, envName);
+		var previousEnv = globalObject[envName];
+		globalObject[envName] = env || {};
+		try {
+			return cb(data);
+		} finally {
+			if (hadEnv) globalObject[envName] = previousEnv;
+			else delete globalObject[envName];
+		}
+	}
 
 	function extend(from, to) {
 		if (!to) to = {};
@@ -138,6 +153,9 @@
 	Parallel.prototype._spawnWorker = function (cb, env) {
 		var wrk;
 		var src = this.getWorkerSource(cb, env);
+		if (localFile) {
+			return undefined;
+		}
 		if (isNode) {
 			wrk = new Worker(this.options.evalPath);
 			wrk.postMessage(src);
@@ -197,7 +215,7 @@
 			} else if (that.options.synchronous) {
 				setImmediate(function () {
 					try {
-						that.data = cb(that.data);
+						that.data = runSynchronously(cb, that.data, env, that.options.envNamespace);
 						newOp.resolve(null, that.data);
 					} catch (e) {
 						newOp.resolve(e, null);
@@ -228,7 +246,7 @@
 			wrk.postMessage(that.data[i]);
 		} else if (that.options.synchronous) {
 			setImmediate(function () {
-				that.data[i] = cb(that.data[i]);
+				that.data[i] = runSynchronously(cb, that.data[i], env, that.options.envNamespace);
 				done();
 			});
 		} else {
@@ -287,7 +305,7 @@
 			wrk.postMessage(data);
 		} else if (that.options.synchronous) {
 			setImmediate(function () {
-				that.data[that.data.length] = cb(data);
+				that.data[that.data.length] = runSynchronously(cb, data, env, that.options.envNamespace);
 				done();
 			});
 		} else {
