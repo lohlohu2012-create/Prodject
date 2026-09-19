@@ -183,6 +183,24 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         if int(sheets) < 1 or int(parts) < 1:
             raise RuntimeError(f"Unexpected nesting stats: sheets={sheets}, parts={parts}")
 
+        assert eval_js("document.getElementById('zoomFit').textContent") == "100%"
+        eval_js("document.getElementById('zoomIn').click()")
+        deadline = time.time() + 2
+        while time.time() < deadline and eval_js("document.getElementById('zoomFit').textContent") != "125%":
+            time.sleep(0.05)
+        assert eval_js("document.getElementById('zoomFit').textContent") == "125%"
+        width_125 = eval_js("document.querySelector('#canvasWrap .result-card').getBoundingClientRect().width")
+        eval_js("document.querySelector('#canvasWrap').dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true,cancelable:true,clientX:400,clientY:300}))")
+        deadline = time.time() + 2
+        while time.time() < deadline and eval_js("document.getElementById('zoomFit').textContent") == "125%":
+            time.sleep(0.05)
+        assert eval_js("document.getElementById('zoomFit').textContent") != "125%"
+        eval_js("document.getElementById('zoomFit').click()")
+        assert eval_js("document.getElementById('zoomFit').textContent") == "100%"
+        width_100 = eval_js("document.querySelector('#canvasWrap .result-card').getBoundingClientRect().width")
+        if width_125 <= width_100:
+            raise RuntimeError(f"Zoom did not enlarge workspace: 125% width={width_125}, 100% width={width_100}")
+
         print("offline-browser-smoke: OK")
         print("protocol:", eval_js("location.protocol"))
         print("title:", eval_js("document.title"))
