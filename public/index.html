@@ -8,27 +8,35 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>SheetNest</h1>
-      <div class="subtitle">Оптимизированный раскрой металлического листа</div>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><path d="M6 8.5 16 4l10 4.5v15L16 28 6 23.5z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 8.5 16 13l10-4.5M16 13v15" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      </div>
+      <div>
+        <h1>SheetNest</h1>
+        <div class="subtitle">Оптимизированный раскрой металлического листа</div>
+      </div>
     </div>
-    <div id="status" class="status">Готово</div>
+    <div class="status-pill"><span class="status-dot"></span><span id="status">Готово</span></div>
   </header>
 
   <main class="layout">
     <aside class="panel">
-      <section>
-        <h2>1. Чертёж детали</h2>
-        <label class="file-button">
-          <input id="fileInput" type="file" accept=".svg,.dxf,.dwg">
-          Загрузить SVG / DXF / DWG
+      <section class="menu-section">
+        <div class="section-heading"><span class="step-badge">01</span><div><h2>Чертёж</h2><p>Исходная геометрия детали</p></div></div>
+        <label class="upload-card">
+          <input id="fileInput" type="file" accept=".svg,.dxf">
+          <span class="upload-icon">↥</span>
+          <span class="upload-title">Загрузить DXF или SVG</span>
+          <span class="upload-subtitle">Поддерживается векторная геометрия</span>
         </label>
-        <div id="fileName" class="muted">Файл не выбран</div>
-        <div id="geometryInfo" class="muted">Геометрия не загружена</div>
+        <div id="fileName" class="file-name">Файл не выбран</div>
+        <div id="geometryInfo" class="geometry-chip"><span class="chip-dot"></span><span>Геометрия не загружена</span></div>
       </section>
 
-      <section>
-        <h2>2. Металлический лист</h2>
+      <section class="menu-section">
+        <div class="section-heading"><span class="step-badge">02</span><div><h2>Металлический лист</h2><p>Размер заготовки и технологические поля</p></div></div>
+
         <label>Материал
           <select id="material">
             <option>Сталь</option>
@@ -44,14 +52,26 @@
           <label>Длина, мм<input id="sheetH" type="number" value="3000" min="1" step="1"></label>
         </div>
 
-        <label>Толщина, мм
-          <input id="thickness" type="number" value="3" min="0.1" step="0.1">
-        </label>
+        <label>Толщина, мм<input id="thickness" type="number" value="3" min="0.1" step="0.1"></label>
 
-        <label>Ориентация листа
+        <div class="sheet-preview-card">
+          <div class="sheet-preview-meta">
+            <span>Предпросмотр листа</span>
+            <span id="previewMaterial">Сталь · 3 мм</span>
+          </div>
+          <div class="sheet-preview">
+            <div id="sheetShape" class="sheet-shape">
+              <span class="dim dim-top" id="previewW">1500 мм</span>
+              <span class="dim dim-side" id="previewH">3000 мм</span>
+              <span class="sheet-center-icon">▧</span>
+            </div>
+          </div>
+        </div>
+
+        <label>Ориентация
           <select id="orientation">
             <option value="fixed">Как указано</option>
-            <option value="auto">Автоматически сравнить оба варианта</option>
+            <option value="auto">Сравнить оба варианта</option>
           </select>
         </label>
 
@@ -61,13 +81,18 @@
         </div>
       </section>
 
-      <section>
-        <h2>3. Производство</h2>
-        <label>Количество одинаковых деталей
-          <input id="quantity" type="number" value="10" min="1" step="1">
-        </label>
+      <section class="menu-section">
+        <div class="section-heading"><span class="step-badge">03</span><div><h2>Производство</h2><p>Количество и стратегия поиска</p></div></div>
 
-        <label>Повороты деталей
+        <div class="quantity-card">
+          <div class="quantity-icon">×</div>
+          <div class="quantity-body">
+            <span>Деталей нужно изготовить</span>
+            <input id="quantity" type="number" value="10" min="1" step="1">
+          </div>
+        </div>
+
+        <label>Повороты детали
           <select id="rotations">
             <option value="1">Только 0°</option>
             <option value="2" selected>0° / 180°</option>
@@ -78,37 +103,54 @@
 
         <label>Качество поиска
           <select id="quality">
-            <option value="fast">Быстро — 10 с</option>
-            <option value="balanced" selected>Баланс — 30 с</option>
-            <option value="max">Максимум — 90 с</option>
+            <option value="fast">Быстро · ~10 с</option>
+            <option value="balanced" selected>Баланс · ~30 с</option>
+            <option value="max">Максимум · ~90 с</option>
           </select>
         </label>
 
-        <div class="hint">
-          Сначала минимизируется количество листов, затем программа ищет максимально компактную раскладку.
+        <div class="optimization-note">
+          <div class="optimization-icon">◎</div>
+          <div><strong>Цель оптимизации</strong><br>минимум листов → максимум заполнения → компактная геометрия раскладки</div>
         </div>
       </section>
 
-      <section>
-        <button id="nestButton" class="primary">Рассчитать раскрой</button>
-        <button id="stopButton" class="danger" disabled>Остановить поиск</button>
-        <button id="downloadButton" class="secondary" disabled>Скачать раскладку SVG</button>
+      <section class="actions-section">
+        <button id="nestButton" class="primary action-btn"><span>Рассчитать раскрой</span><span class="arrow">→</span></button>
+        <button id="stopButton" class="danger action-btn" disabled><span>Остановить поиск</span><span>×</span></button>
+        <button id="downloadButton" class="secondary action-btn" disabled><span>Скачать раскладку SVG</span><span>↓</span></button>
       </section>
 
-      <section class="stats">
-        <div><span>Листов</span><strong id="statSheets">0</strong></div>
-        <div><span>Деталей</span><strong id="statParts">0</strong></div>
-        <div><span>Заполнение</span><strong id="statEfficiency">0%</strong></div>
+      <section class="stats-section">
+        <div class="stat-card"><span>Листов</span><strong id="statSheets">0</strong></div>
+        <div class="stat-card"><span>Деталей</span><strong id="statParts">0</strong></div>
+        <div class="stat-card"><span>Заполнение</span><strong id="statEfficiency">0%</strong></div>
       </section>
     </aside>
 
     <section class="workspace">
-      <div class="toolbar">
-        <div id="runInfo">Расчёт ещё не запускался.</div>
-        <div class="progress"><div id="progressBar"></div></div>
+      <div class="workspace-toolbar">
+        <div class="workspace-title">
+          <div class="workspace-title-icon">⌗</div>
+          <div><strong>Результат раскроя</strong><span id="runInfo">Ожидает запуск расчёта</span></div>
+        </div>
+        <div class="toolbar-right">
+          <span class="toolbar-hint">NFP nesting</span>
+          <div class="progress"><div id="progressBar"></div></div>
+        </div>
       </div>
+
       <div id="canvasWrap" class="canvas-wrap">
-        <div class="empty">Загрузите чертёж детали, задайте размер металлического листа и количество.</div>
+        <div class="empty-state">
+          <div class="empty-illustration">
+            <div class="empty-sheet"></div>
+            <div class="empty-part part-a"></div>
+            <div class="empty-part part-b"></div>
+            <div class="empty-part part-c"></div>
+          </div>
+          <h3>Задайте параметры раскроя</h3>
+          <p>Загрузите DXF/SVG, укажите размер металлического листа и количество деталей. Здесь появятся все листы с оптимизированной раскладкой.</p>
+        </div>
       </div>
     </section>
   </main>
