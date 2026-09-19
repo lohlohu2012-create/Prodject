@@ -22,8 +22,8 @@ function dxfPoint(x,y){return{x:dxfNum(x),y:dxfNum(y)}}
 function dxfSame(a,b){return Math.hypot(a.x-b.x,a.y-b.y)<=0.01}
 function dxfPathFromPoints(points){
   if(!points||points.length<2)return "";
-  let d=\`M \${points[0].x} \${-points[0].y}\`;
-  for(let i=1;i<points.length;i++)d+=\` L \${points[i].x} \${-points[i].y}\`;
+  let d=`M ${points[0].x} ${-points[0].y}`;
+  for(let i=1;i<points.length;i++)d+=` L ${points[i].x} ${-points[i].y}`;
   return d+" Z";
 }
 function dxfRecords(text){
@@ -157,7 +157,7 @@ function dxfTextToSvg(text){
     const shifted=c.map(p=>({x:p.x-minX,y:p.y-maxY}));
     return dxfPathFromPoints(shifted);
   }).join("");
-  return \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 \${width} \${height}" width="\${width}" height="\${height}" data-contours="\${closed.length}" data-open="\${open.length}"><g fill="none" stroke="black" stroke-width="0.2">\${paths}</g></svg>\`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-contours="${closed.length}" data-open="${open.length}"><g fill="none" stroke="black" stroke-width="0.2">${paths}</g></svg>`;
 }
 
 function sourceElements(svgText){
