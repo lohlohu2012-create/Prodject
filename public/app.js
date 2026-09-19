@@ -72,7 +72,10 @@ function decorateResultSvg(svg,meta,sheetIndex){
     const raw=group.getAttribute("transform")||"";
     const match=raw.match(/translate\(([-+\d.eE]+)[ ,]+([-+\d.eE]+)/);
     if(!match)return;
-    const x=Number(match[1])+margin,y=Number(match[2])+margin;
+    const rawX=Number(match[1]), rawY=Number(match[2]);
+    const x=rawX+margin, y=rawY+margin;
+    const shifted=raw.replace(/translate\\(([-+\\d.eE]+)[ ,]+([-+\\d.eE]+)/, `translate(${x} ${y}`);
+    group.setAttribute("transform", shifted);
     const wrapper=document.createElementNS(ns,"g");
     const dot=document.createElementNS(ns,"circle");dot.setAttribute("cx",x);dot.setAttribute("cy",y);dot.setAttribute("r","4.2");dot.setAttribute("fill","#111820");dot.setAttribute("opacity",".88");
     const text=document.createElementNS(ns,"text");text.setAttribute("x",x);text.setAttribute("y",y+1.7);text.setAttribute("text-anchor","middle");text.setAttribute("font-size","4.8");text.setAttribute("font-family","Arial,sans-serif");text.setAttribute("font-weight","700");text.setAttribute("fill","#fff");text.textContent=partNo++;
