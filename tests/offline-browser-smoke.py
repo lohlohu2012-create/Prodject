@@ -148,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
           document.getElementById('gap').value='1';
           document.getElementById('quantity').value='1';
           document.getElementById('rotations').value='1';
-          qualityConfig = () => ({seconds: 0.5, populationSize: 4, mutationRate: 1});
+          qualityConfig = () => ({seconds: 5, populationSize: 4, mutationRate: 1});
         """)
 
         eval_js("document.getElementById('nestButton').click()")
