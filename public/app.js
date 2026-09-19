@@ -1,314 +1,227 @@
-const PRESETS = {
-  A4: [210, 297],
-  A3: [297, 420],
-  A2: [420, 594],
-  A1: [594, 841],
-  A0: [841, 1189]
-};
+const state = { sourceSvg:null, resultSvgs:[], resultMeta:null, running:false, startedAt:0, durationMs:0, stopTimer:null };
 
-const state = {
-  sourceSvg: null,
-  parts: [],
-  result: [],
-  sheet: { w: 841, h: 1189 },
-  unit: "mm"
-};
+const $ = id => document.getElementById(id);
+const status = value => $("status").textContent = value;
 
-const $ = (id) => document.getElementById(id);
-const status = (message) => { $("status").textContent = message; };
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
-}
-
-function parseSvg(svgText) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgText, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.nodeName.toLowerCase() !== "svg") throw new Error("Файл не является SVG");
-  return root;
-}
-
-function collectParts(root) {
-  const elements = [...root.querySelectorAll("path, polygon, polyline, rect, circle, ellipse, line")];
-  if (!elements.length) throw new Error("В файле не найдена векторная геометрия");
-
-  const measureSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  measureSvg.setAttribute("width", "1");
-  measureSvg.setAttribute("height", "1");
-  measureSvg.style.position = "absolute";
-  measureSvg.style.left = "-100000px";
-  measureSvg.style.top = "-100000px";
-  document.body.appendChild(measureSvg);
-
-  const parts = [];
-  elements.forEach((el, index) => {
-    const clone = el.cloneNode(true);
-    clone.removeAttribute("id");
-    clone.setAttribute("vector-effect", "non-scaling-stroke");
-    measureSvg.appendChild(clone);
-
-    let box;
-    try { box = clone.getBBox(); } catch (_) { box = null; }
-    if (box && box.width > 0.001 && box.height > 0.001) {
-      parts.push({
-        id: index + 1,
-        markup: new XMLSerializer().serializeToString(clone),
-        x: box.x, y: box.y, w: box.width, h: box.height,
-        area: Math.max(box.width * box.height, 0.001)
-      });
-    }
-    measureSvg.removeChild(clone);
-  });
-
-  document.body.removeChild(measureSvg);
-  return parts;
-}
-
-function normalizePartMarkup(part) {
-  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  g.innerHTML = part.markup;
-  const node = g.firstElementChild;
-  if (!node) return part.markup;
-  node.setAttribute("transform", `translate(${-part.x} ${-part.y})`);
-  return new XMLSerializer().serializeToString(node);
-}
-
-function readSheetSettings() {
-  const preset = $("preset").value;
-  let [w, h] = preset === "custom" ? [Number($("sheetW").value), Number($("sheetH").value)] : PRESETS[preset];
-  if ($("orientation").value === "landscape" && h > w) [w, h] = [h, w];
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) throw new Error("Некорректный размер листа");
-  state.sheet = { w, h };
-}
-
-function readNumber(id, fallback = 0) {
+function readNumber(id, fallback) {
   const n = Number($(id).value);
   return Number.isFinite(n) ? n : fallback;
 }
 
-function clonePartsForQuantity() {
-  const qty = Math.max(1, Math.floor(readNumber("quantity", 1)));
-  const out = [];
-  for (let i = 0; i < qty; i++) {
-    for (const p of state.parts) {
-      out.push({ ...p, copy: i + 1, instanceId: `${p.id}-${i + 1}` });
-    }
-  }
-  return out;
+function qualityConfig() {
+  const quality = $("quality").value;
+  if (quality === "fast") return { seconds:10, populationSize:12, mutationRate:12 };
+  if (quality === "max") return { seconds:90, populationSize:40, mutationRate:18 };
+  return { seconds:30, populationSize:24, mutationRate:15 };
 }
 
-function placeParts(parts) {
-  const margin = readNumber("margin", 10);
-  const gap = readNumber("gap", 3);
-  const rot90 = $("rotation").value === "90";
-  const innerW = state.sheet.w - 2 * margin;
-  const innerH = state.sheet.h - 2 * margin;
-
-  if (innerW <= 0 || innerH <= 0) throw new Error("Поле листа больше размера листа");
-
-  const sheets = [];
-  let current = [];
-  let x = 0;
-  let y = 0;
-  let rowH = 0;
-
-  const tryPlace = (part, rotation) => {
-    let w = part.w, h = part.h;
-    if (rotation === 90) [w, h] = [h, w];
-    if (w > innerW || h > innerH) return false;
-
-    if (x + w > innerW + 1e-9) {
-      x = 0;
-      y += rowH + gap;
-      rowH = 0;
-    }
-    if (y + h > innerH + 1e-9) return false;
-
-    current.push({ ...part, x: margin + x, y: margin + y, w, h, rotation });
-    x += w + gap;
-    rowH = Math.max(rowH, h);
-    return true;
-  };
-
-  for (const part of parts.sort((a, b) => Math.max(b.w, b.h) * Math.max(b.w, b.h) - Math.max(a.w, a.h) * Math.max(a.w, a.h))) {
-    const rotations = rot90 ? [0, 90] : [0];
-    let placed = false;
-    for (const r of rotations) {
-      const snapshot = { x, y, rowH, currentLength: current.length };
-      if (tryPlace(part, r)) { placed = true; break; }
-      x = snapshot.x; y = snapshot.y; rowH = snapshot.rowH; current.length = snapshot.currentLength;
-    }
-    if (!placed) {
-      if (current.length) {
-        sheets.push(current);
-        current = [];
-        x = 0; y = 0; rowH = 0;
-      }
-      let ok = false;
-      for (const r of rotations) if (tryPlace(part, r)) { ok = true; break; }
-      if (!ok) throw new Error(`Деталь ${part.id} не помещается на выбранный лист`);
-    }
-  }
-
-  if (current.length) sheets.push(current);
-  return sheets;
+function getSheet() {
+  const w = readNumber("sheetW",1500), h = readNumber("sheetH",3000);
+  if (w <= 0 || h <= 0) throw new Error("Размер листа должен быть больше нуля.");
+  return { w, h, auto: $("orientation").value === "auto" };
 }
 
-function renderResult() {
+function sourceElements(svgText) {
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.nodeName.toLowerCase() !== "svg") throw new Error("Файл не является корректным SVG.");
+
+  const result = Array.from(root.children).filter(node => !["defs","style","title","desc","metadata"].includes(node.tagName.toLowerCase()));
+  if (!result.length) throw new Error("В файле не найдена векторная геометрия.");
+  return result.map(node => node.cloneNode(true));
+}
+
+function buildNestingSvg(w, h, quantity) {
+  const elements = sourceElements(state.sourceSvg);
+  const ns = "http://www.w3.org/2000/svg";
+  const root = document.createElementNS(ns,"svg");
+  root.setAttribute("xmlns",ns);
+  root.setAttribute("viewBox",`0 0 ${w} ${h}`);
+  root.setAttribute("width",String(w));
+  root.setAttribute("height",String(h));
+
+  const bin = document.createElementNS(ns,"rect");
+  bin.setAttribute("id","sheet-bin");
+  bin.setAttribute("x","0"); bin.setAttribute("y","0");
+  bin.setAttribute("width",String(w)); bin.setAttribute("height",String(h));
+  root.appendChild(bin);
+
+  const repeat = Math.max(1,Math.floor(quantity));
+  for (let copy=0; copy<repeat; copy++) {
+    for (const element of elements) {
+      const clone = element.cloneNode(true);
+      clone.removeAttribute("id");
+      root.appendChild(clone);
+    }
+  }
+  return new XMLSerializer().serializeToString(root);
+}
+
+function resetEngine() {
+  try { SvgNest.stop(); } catch (_) {}
+  const q = qualityConfig();
+  SvgNest.config({
+    spacing: readNumber("gap",2),
+    rotations: Math.max(1,Math.floor(readNumber("rotations",2))),
+    populationSize: q.populationSize,
+    mutationRate: q.mutationRate,
+    curveTolerance: 0.2,
+    useHoles: true,
+    exploreConcave: true
+  });
+}
+
+function renderResults(svgList, efficiency, placed, total, sheet) {
   const wrap = $("canvasWrap");
   wrap.innerHTML = "";
 
-  const scale = Math.min(0.9, 900 / Math.max(state.sheet.w, state.sheet.h));
-  let totalArea = 0;
+  state.resultMeta = {
+    material: $("material").value,
+    thickness: readNumber("thickness",3),
+    sheetW: sheet.w,
+    sheetH: sheet.h,
+    efficiency: Number(efficiency || 0),
+    placed: Number(placed || 0),
+    total: Number(total || 0)
+  };
 
-  state.result.forEach((sheetParts, sheetIndex) => {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.classList.add("sheet");
-    svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    svg.setAttribute("viewBox", `0 0 ${state.sheet.w} ${state.sheet.h}`);
-    svg.setAttribute("width", state.sheet.w * scale);
-    svg.setAttribute("height", state.sheet.h * scale);
-
-    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    bg.setAttribute("width", state.sheet.w);
-    bg.setAttribute("height", state.sheet.h);
-    bg.setAttribute("fill", "#ffffff");
-    bg.setAttribute("stroke", "#111827");
-    bg.setAttribute("stroke-width", "0.6");
-    svg.appendChild(bg);
-
-    const border = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    border.setAttribute("x", readNumber("margin", 10));
-    border.setAttribute("y", readNumber("margin", 10));
-    border.setAttribute("width", state.sheet.w - 2 * readNumber("margin", 10));
-    border.setAttribute("height", state.sheet.h - 2 * readNumber("margin", 10));
-    border.setAttribute("fill", "none");
-    border.setAttribute("stroke", "#c5cad1");
-    border.setAttribute("stroke-dasharray", "3 3");
-    border.setAttribute("stroke-width", "0.5");
-    svg.appendChild(border);
-
-    sheetParts.forEach((part, i) => {
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      const transform = part.rotation === 90
-        ? `translate(${part.x + part.w} ${part.y}) rotate(90)`
-        : `translate(${part.x} ${part.y})`;
-      g.setAttribute("transform", transform);
-
-      const inner = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      inner.innerHTML = normalizePartMarkup(part);
-      const node = inner.firstElementChild;
-      if (node) g.appendChild(node);
-      svg.appendChild(g);
-      totalArea += part.w * part.h;
-    });
-
-    const caption = document.createElement("div");
-    caption.className = "muted";
-    caption.style.margin = "0 0 6px";
-    caption.textContent = `Лист ${sheetIndex + 1} · ${state.sheet.w} × ${state.sheet.h} мм · деталей: ${sheetParts.length}`;
-    wrap.appendChild(caption);
-    wrap.appendChild(svg);
+  svgList.forEach((svg,index) => {
+    const card = document.createElement("div");
+    card.className = "result-card";
+    const title = document.createElement("div");
+    title.className = "result-title";
+    title.innerHTML = `<strong>Лист ${index+1}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(state.resultMeta.material)} · ${state.resultMeta.thickness} мм</span>`;
+    const clone = svg.cloneNode(true);
+    clone.classList.add("sheet-svg");
+    clone.removeAttribute("width"); clone.removeAttribute("height");
+    card.appendChild(title); card.appendChild(clone); wrap.appendChild(card);
   });
 
-  const used = state.result.reduce((sum, s) => sum + s.reduce((a, p) => a + p.area, 0), 0);
-  const sheetArea = state.result.length * state.sheet.w * state.sheet.h;
-  $("statSheets").textContent = state.result.length;
-  $("statParts").textContent = state.result.reduce((n, s) => n + s.length, 0);
-  $("statEfficiency").textContent = sheetArea ? `${Math.round((used / sheetArea) * 100)}%` : "0%";
-  $("downloadButton").disabled = state.result.length === 0;
+  $("statSheets").textContent = svgList.length;
+  $("statParts").textContent = placed || 0;
+  $("statEfficiency").textContent = `${Math.round((efficiency || 0)*100)}%`;
+  $("downloadButton").disabled = svgList.length === 0;
 }
 
-function buildDownloadSvg() {
-  const groups = [];
-  const gap = 40;
-  let yOffset = 0;
-  for (const sheetParts of state.result) {
-    const parts = sheetParts.map(part => {
-      const transform = part.rotation === 90
-        ? `translate(${part.x + part.w} ${part.y}) rotate(90)`
-        : `translate(${part.x} ${part.y})`;
-      return `<g transform="${transform}">${normalizePartMarkup(part)}</g>`;
-    }).join("");
-
-    groups.push(`<g transform="translate(0 ${yOffset})"><rect x="0" y="0" width="${state.sheet.w}" height="${state.sheet.h}" fill="white" stroke="black" stroke-width="0.5"/>${parts}</g>`);
-    yOffset += state.sheet.h + gap;
-  }
-  const height = Math.max(1, yOffset - gap);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${state.sheet.w}" height="${height}" viewBox="0 0 ${state.sheet.w} ${height}">${groups.join("")}</svg>`;
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g,c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 }
 
-$("preset").addEventListener("change", () => {
-  const preset = $("preset").value;
-  if (preset !== "custom") {
-    const [w, h] = PRESETS[preset];
-    $("sheetW").value = w;
-    $("sheetH").value = h;
-  }
-  if (state.parts.length) {
-    try { readSheetSettings(); state.result = placeParts(clonePartsForQuantity()); renderResult(); } catch (_) {}
-  }
-});
+function updateProgress() {
+  if (!state.running) return;
+  const elapsed = Date.now() - state.startedAt;
+  const p = Math.min(1, elapsed / state.durationMs);
+  $("progressBar").style.width = `${Math.round(p*100)}%`;
+  $("runInfo").textContent = `Ищем более компактную раскладку… ${Math.max(0,Math.ceil((state.durationMs-elapsed)/1000))} с`;
+}
 
-$("orientation").addEventListener("change", () => {
-  try { readSheetSettings(); if (state.parts.length) { state.result = placeParts(clonePartsForQuantity()); renderResult(); } } catch (_) {}
-});
+function startOneRun(sheet, runDurationMs) {
+  resetEngine();
+  const quantity = Math.max(1,Math.floor(readNumber("quantity",1)));
+  const parsed = SvgNest.parsesvg(buildNestingSvg(sheet.w,sheet.h,quantity));
+  const bin = parsed.querySelector("#sheet-bin");
+  if (!bin) throw new Error("Не удалось создать металлический лист.");
+  SvgNest.setbin(bin);
 
-$("fileInput").addEventListener("change", async (event) => {
+  SvgNest.start(
+    progress => {
+      if (state.running) $("progressBar").style.width = `${Math.max(2,Math.round((progress || 0)*100))}%`;
+    },
+    (svglist,efficiency,placed,total) => {
+      if (!svglist || !svglist.length) return;
+      state.resultSvgs = svglist;
+      renderResults(svglist,efficiency,placed,total,sheet);
+      $("runInfo").textContent = `Найден улучшенный вариант: ${svglist.length} лист(ов), ${placed || 0}/${total || 0} деталей`;
+    }
+  );
+
+  return new Promise(resolve => {
+    const timer = setInterval(() => {
+      if (!state.running) { clearInterval(timer); resolve(); return; }
+      updateProgress();
+      if (Date.now() - state.startedAt >= runDurationMs) {
+        clearInterval(timer);
+        try { SvgNest.stop(); } catch (_) {}
+        resolve();
+      }
+    },200);
+  });
+}
+
+async function runSearch() {
+  if (!state.sourceSvg) throw new Error("Сначала загрузите чертёж.");
+  const sheet = getSheet();
+  const q = qualityConfig();
+  const orientations = sheet.auto ? [{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}] : [{w:sheet.w,h:sheet.h}];
+
+  $("nestButton").disabled = true; $("stopButton").disabled = false; $("downloadButton").disabled = true;
+  status("Расчёт...");
+  state.running = true; state.resultSvgs = []; state.resultMeta = null;
+  state.durationMs = q.seconds * 1000 / orientations.length;
+  state.startedAt = Date.now();
+  $("progressBar").style.width = "0%";
+
+  let best = null;
+  for (const candidate of orientations) {
+    if (!state.running) break;
+    state.resultSvgs = [];
+    state.startedAt = Date.now();
+    await startOneRun(candidate,state.durationMs);
+    const meta = state.resultMeta;
+    if (meta && state.resultSvgs.length) {
+      const score = state.resultSvgs.length * 1000000 - meta.efficiency;
+      if (!best || score < best.score) best = { score, results:state.resultSvgs, meta };
+    }
+  }
+
+  try { SvgNest.stop(); } catch (_) {}
+  state.running = false; $("nestButton").disabled = false; $("stopButton").disabled = true;
+
+  if (best) {
+    state.resultSvgs = best.results; state.resultMeta = best.meta;
+    renderResults(best.results,best.meta.efficiency,best.meta.placed,best.meta.total,{w:best.meta.sheetW,h:best.meta.sheetH});
+    $("runInfo").textContent = `Итог: ${best.results.length} лист(ов), ${best.meta.placed}/${best.meta.total} деталей. Показан лучший найденный вариант.`;
+    $("progressBar").style.width = "100%"; status("Раскрой рассчитан");
+  } else {
+    $("runInfo").textContent = "Допустимую раскладку не удалось найти.";
+    status("Нет результата");
+  }
+}
+
+$("fileInput").addEventListener("change",async event => {
   const file = event.target.files?.[0];
   if (!file) return;
-
-  $("fileName").textContent = file.name;
-  status("Загрузка...");
-
+  $("fileName").textContent = file.name; status("Загрузка...");
   try {
     const ext = file.name.split(".").pop().toLowerCase();
     let svgText;
-
-    if (ext === "svg") {
-      svgText = await file.text();
-    } else {
-      const form = new FormData();
-      form.append("file", file);
-      const response = await fetch(ext === "dwg" ? "/api/import/dwg" : "/api/import/dxf", { method: "POST", body: form });
+    if (ext === "svg") svgText = await file.text();
+    else {
+      const form = new FormData(); form.append("file",file);
+      const response = await fetch(ext === "dwg" ? "/api/import/dwg" : "/api/import/dxf",{method:"POST",body:form});
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Ошибка импорта");
+      if (!response.ok) throw new Error(data.error || "Ошибка импорта.");
       svgText = data.svg;
     }
-
-    const root = parseSvg(svgText);
+    sourceElements(svgText);
     state.sourceSvg = svgText;
-    state.parts = collectParts(root);
-    $("geometryInfo").textContent = `Загружено геометрических элементов: ${state.parts.length}`;
+    $("geometryInfo").textContent = "Чертёж готов к раскрою.";
     status("Чертёж загружен");
   } catch (err) {
-    status("Ошибка");
-    alert(err.message);
+    state.sourceSvg = null; $("geometryInfo").textContent = "Ошибка импорта."; status("Ошибка"); alert(err.message);
   }
 });
 
-$("nestButton").addEventListener("click", () => {
-  try {
-    if (!state.parts.length) throw new Error("Сначала загрузите чертёж");
-    readSheetSettings();
-    const items = clonePartsForQuantity();
-    state.result = placeParts(items);
-    renderResult();
-    status("Раскладка готова");
-  } catch (err) {
-    status("Ошибка");
-    alert(err.message);
-  }
-});
+$("nestButton").addEventListener("click",() => runSearch().catch(err => { state.running=false; try{SvgNest.stop();}catch(_){}; $("nestButton").disabled=false; $("stopButton").disabled=true; status("Ошибка"); alert(err.message); }));
+$("stopButton").addEventListener("click",() => { state.running=false; try{SvgNest.stop();}catch(_){}; $("nestButton").disabled=false; $("stopButton").disabled=true; $("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант."; status("Остановлено"); $("progressBar").style.width="100%"; });
 
-$("downloadButton").addEventListener("click", () => {
-  const svg = buildDownloadSvg();
-  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+$("downloadButton").addEventListener("click",() => {
+  if (!state.resultSvgs.length) return;
+  const svg = state.resultSvgs.map(item => new XMLSerializer().serializeToString(item)).join("\n");
+  const out = `<svg xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
+  const blob = new Blob([out],{type:"image/svg+xml;charset=utf-8"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = "sheetnest-layout.svg";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  a.href=url; a.download="sheetnest-metal-layout.svg"; a.click();
+  setTimeout(() => URL.revokeObjectURL(url),1000);
 });
