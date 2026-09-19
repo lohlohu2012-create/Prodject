@@ -154,18 +154,20 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         deadline = time.time() + 5
         while time.time() < deadline:
             text = eval_js("document.getElementById('geometryInfo').textContent")
-            if "Загружено" in text:
+            if "sample.dxf" in text:
                 break
             time.sleep(0.1)
         else:
             raise RuntimeError(f"DXF was not imported: {text!r}")
 
         eval_js("""
-          document.getElementById('sheetW').value='200';
-          document.getElementById('sheetH').value='200';
+          document.getElementById("sheetW").value="300";
+          document.getElementById("sheetH").value="300";
           document.getElementById('margin').value='0';
           document.getElementById('gap').value='1';
-          document.getElementById('quantity').value='1';
+          const rect=Array.from(document.querySelectorAll("#shapeLibrary .shape-card")).find(card=>card.textContent.includes("Прямоугольник"));
+          rect.querySelector(".shape-card-qty").value="2";
+          rect.querySelector(".shape-add").click();
           document.getElementById('rotations').value='1';
           qualityConfig = () => ({seconds: 5, populationSize: 4, mutationRate: 1});
         """)
@@ -195,9 +197,14 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
             raise RuntimeError(f"Nesting timed out: status={status!r}, info={run_info!r}")
 
         sheets = eval_js("document.getElementById('statSheets').textContent")
+        frames = eval_js("typeof state !== \"undefined\" ? state.searchFrames : 0")
         parts = eval_js("document.getElementById('statParts').textContent")
         if int(sheets) < 1 or int(parts) < 1:
             raise RuntimeError(f"Unexpected nesting stats: sheets={sheets}, parts={parts}")
+        if int(parts) < 3:
+            raise RuntimeError(f"Mixed parts were not counted: parts={parts}")
+        if int(frames) < 1:
+            raise RuntimeError(f"Live nesting preview did not receive candidate frames: frames={frames}")
 
         assert eval_js("document.getElementById('zoomFit').textContent") == "100%"
         eval_js("document.getElementById('zoomIn').click()")
@@ -222,7 +229,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         print("title:", eval_js("document.title"))
         print("dxf:", eval_js("document.getElementById('geometryInfo').textContent"))
         print("status:", eval_js("document.getElementById('status').textContent"))
-        print("sheets:", sheets, "parts:", parts)
+        print("sheets:", sheets, "parts:", parts, "frames:", frames)
         ws.close()
     finally:
         proc.terminate()
