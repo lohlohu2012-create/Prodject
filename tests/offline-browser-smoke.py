@@ -185,7 +185,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
                     "status": status,
                     "runInfo": run_info,
                     "geometry": eval_js("document.getElementById('geometryInfo').textContent"),
-                    "sourceSvgLength": eval_js("typeof state !== 'undefined' && state.sourceSvg ? state.sourceSvg.length : -1"),
+                    "customParts": eval_js("typeof state !== 'undefined' ? state.customParts.length : -1"),
                     "resultCount": eval_js("typeof state !== 'undefined' ? state.resultSvgs.length : -1"),
                     "engineWorking": eval_js("typeof SvgNest !== 'undefined' ? SvgNest.working : null"),
                     "consoleErrors": eval_js("window.__offlineErrors || []"),
