@@ -35,7 +35,7 @@ const deadline=Date.now()+1000;
 (function wait(){
   if(sandbox.testDone){
     if(sandbox.testError)throw new Error(sandbox.testError);
-    assert.deepStrictEqual(sandbox.testResult,[42],"file:// synchronous fallback returned the wrong result");
+    assert.strictEqual(JSON.stringify(sandbox.testResult),"[42]","file:// synchronous fallback returned the wrong result");
     console.log("offline-parallel-smoke: ok");
     return;
   }
