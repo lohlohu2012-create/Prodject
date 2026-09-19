@@ -16,6 +16,150 @@ function updateSheetPreview(){
   $("previewH").textContent=h+" мм";
   $("previewMaterial").textContent=$("material").value+" · "+readNumber("thickness",3)+" мм";
 }
+
+function dxfNum(value,fallback=0){const n=Number(value);return Number.isFinite(n)?n:fallback}
+function dxfPoint(x,y){return{x:dxfNum(x),y:dxfNum(y)}}
+function dxfSame(a,b){return Math.hypot(a.x-b.x,a.y-b.y)<=0.01}
+function dxfPathFromPoints(points){
+  if(!points||points.length<2)return "";
+  let d=\`M \${points[0].x} \${-points[0].y}\`;
+  for(let i=1;i<points.length;i++)d+=\` L \${points[i].x} \${-points[i].y}\`;
+  return d+" Z";
+}
+function dxfRecords(text){
+  const lines=String(text||"").replace(/^\uFEFF/,"").replace(/\r\n?/g,"\n").split("\n");
+  const records=[];
+  for(let i=0;i+1<lines.length;i+=2){
+    const code=Number(lines[i].trim());
+    const value=lines[i+1];
+    if(Number.isFinite(code))records.push({type:code,value:value.trim()});
+  }
+  return records;
+}
+function dxfEntities(text){
+  const records=dxfRecords(text);
+  const entities=[];
+  let inEntities=false;
+  for(let i=0;i<records.length;i++){
+    const r=records[i];
+    if(r.type===0&&r.value==="SECTION"){
+      const next=records[i+1];
+      inEntities=Boolean(next&&next.type===2&&next.value==="ENTITIES");
+      continue;
+    }
+    if(r.type===0&&r.value==="ENDSEC"){inEntities=false;continue}
+    if(!inEntities||r.type!==0)continue;
+    const entity={type:r.value,pairs:[]};
+    i++;
+    while(i<records.length&&records[i].type!==0){entity.pairs.push(records[i]);i++}
+    i--;
+    entities.push(entity);
+  }
+  return entities;
+}
+function dxfPair(entity,code,fallback=null){
+  const pair=entity.pairs.find(item=>item.type===code);
+  return pair?pair.value:fallback;
+}
+function dxfPairs(entity,code){
+  return entity.pairs.filter(item=>item.type===code).map(item=>item.value);
+}
+function dxfPolylinePoints(entity){
+  const points=[];
+  let x=null,y=null;
+  for(const pair of entity.pairs){
+    if(pair.type===10)x=dxfNum(pair.value);
+    if(pair.type===20)y=dxfNum(pair.value);
+    if(pair.type===10&&x!==null&&y!==null){points.push(dxfPoint(x,y));x=null;y=null}
+  }
+  return points;
+}
+function dxfParse(){
+  const contours={closed:[],open:[],segments:[]};
+  return contours;
+}
+function dxfTextToSvg(text){
+  const entities=dxfEntities(text),closed=[],open=[],segments=[];
+  for(let i=0;i<entities.length;i++){
+    const e=entities[i],type=String(e.type||"").toUpperCase();
+    if(type==="LWPOLYLINE"){
+      const xs=dxfPairs(e,10).map(Number),ys=dxfPairs(e,20).map(Number),pts=[];
+      for(let k=0;k<Math.min(xs.length,ys.length);k++)pts.push(dxfPoint(xs[k],ys[k]));
+      if(pts.length>=2){
+        const flags=dxfNum(dxfPair(e,70,0));
+        (flags&1?closed:open).push(pts);
+      }
+      continue;
+    }
+    if(type==="POLYLINE"){
+      const pts=[];let j=i+1;
+      for(;j<entities.length;j++){
+        const child=entities[j],ct=String(child.type||"").toUpperCase();
+        if(ct==="VERTEX"){
+          const x=dxfPair(child,10),y=dxfPair(child,20);
+          if(x!==null&&y!==null)pts.push(dxfPoint(x,y));
+          continue;
+        }
+        if(ct==="SEQEND")break;
+        break;
+      }
+      i=j;
+      if(pts.length>=2){
+        const flags=dxfNum(dxfPair(e,70,0));
+        (flags&1?closed:open).push(pts);
+      }
+      continue;
+    }
+    if(type==="LINE"){
+      const x1=dxfPair(e,10),y1=dxfPair(e,20),x2=dxfPair(e,11),y2=dxfPair(e,21);
+      if(x1!==null&&y1!==null&&x2!==null&&y2!==null)segments.push({a:dxfPoint(x1,y1),b:dxfPoint(x2,y2)});
+      continue;
+    }
+    if(type==="CIRCLE"){
+      const cx=dxfNum(dxfPair(e,10)),cy=dxfNum(dxfPair(e,20)),r=Math.abs(dxfNum(dxfPair(e,40)));
+      const steps=Math.max(24,Math.ceil(2*Math.PI*Math.max(r,1)/2)),pts=[];
+      for(let k=0;k<steps;k++){const t=2*Math.PI*k/steps;pts.push(dxfPoint(cx+r*Math.cos(t),cy+r*Math.sin(t)))}
+      closed.push(pts);
+      continue;
+    }
+    if(type==="ARC"){
+      const cx=dxfNum(dxfPair(e,10)),cy=dxfNum(dxfPair(e,20)),r=Math.abs(dxfNum(dxfPair(e,40)));
+      const a0=dxfNum(dxfPair(e,50)),a1=dxfNum(dxfPair(e,51));let delta=(a1-a0)%360;if(delta<0)delta+=360;
+      const steps=Math.max(8,Math.ceil(delta/5)),pts=[];
+      for(let k=0;k<=steps;k++){const a=(a0+delta*k/steps)*Math.PI/180;pts.push(dxfPoint(cx+r*Math.cos(a),cy+r*Math.sin(a)))}
+      open.push(pts);
+    }
+  }
+
+  while(segments.length){
+    const seed=segments.pop();let chain=[seed.a,seed.b],extended=true;
+    while(extended){
+      extended=false;
+      for(let i=segments.length-1;i>=0;i--){
+        const s=segments[i];
+        if(dxfSame(chain[chain.length-1],s.a)){chain.push(s.b);segments.splice(i,1);extended=true;break}
+        if(dxfSame(chain[chain.length-1],s.b)){chain.push(s.a);segments.splice(i,1);extended=true;break}
+        if(dxfSame(chain[0],s.b)){chain.unshift(s.a);segments.splice(i,1);extended=true;break}
+        if(dxfSame(chain[0],s.a)){chain.unshift(s.b);segments.splice(i,1);extended=true;break}
+      }
+    }
+    if(chain.length>=3&&dxfSame(chain[0],chain[chain.length-1])){chain.pop();closed.push(chain)}
+    else if(chain.length>=2)open.push(chain);
+  }
+
+  if(!closed.length)throw new Error("В DXF не найден замкнутый контур детали.");
+
+  const points=closed.flat(),bounds={minX:Infinity,maxX:-Infinity,minY:Infinity,maxY:-Infinity};
+  for(const p of points){bounds.minX=Math.min(bounds.minX,p.x);bounds.maxX=Math.max(bounds.maxX,p.x);bounds.minY=Math.min(bounds.minY,p.y);bounds.maxY=Math.max(bounds.maxY,p.y)}
+  const padding=1,minX=bounds.minX-padding,maxY=bounds.maxY+padding;
+  const width=Math.max(1,bounds.maxX-bounds.minX+2*padding),height=Math.max(1,bounds.maxY-bounds.minY+2*padding);
+  const paths=closed.map(c=>{
+    const shifted=c.map(p=>({x:p.x-minX,y:p.y-maxY}));
+    return dxfPathFromPoints(shifted);
+  }).join("");
+  return \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 \${width} \${height}" width="\${width}" height="\${height}" data-contours="\${closed.length}" data-open="\${open.length}"><g fill="none" stroke="black" stroke-width="0.2">\${paths}</g></svg>\`;
+}
+
 function sourceElements(svgText){
   const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"),root=doc.documentElement;
   if(!root||root.nodeName.toLowerCase()!=="svg")throw new Error("Файл не является корректным SVG.");
@@ -152,11 +296,8 @@ $("fileInput").addEventListener("change",async event=>{
   try{
     const ext=file.name.split(".").pop().toLowerCase();let svgText;
     if(ext==="svg")svgText=await file.text();
-    else if(ext==="dxf"){
-      const form=new FormData();form.append("file",file);
-      const response=await fetch("/api/import/dxf",{method:"POST",body:form});const data=await response.json();
-      if(!response.ok)throw new Error(data.error||"Ошибка импорта DXF.");svgText=data.svg;
-    }else throw new Error("Поддерживаются только DXF и SVG.");
+    else if(ext==="dxf")svgText=dxfTextToSvg(await file.text());
+    else throw new Error("Поддерживаются только DXF и SVG.");
     const elements=sourceElements(svgText);state.sourceSvg=svgText;
     $("geometryInfo").innerHTML=`<span class="chip-dot"></span><span>Загружено элементов: ${elements.length}</span>`;status("Чертёж загружен");
   }catch(err){state.sourceSvg=null;$("geometryInfo").innerHTML='<span class="chip-dot"></span><span>Ошибка импорта</span>';status("Ошибка");alert(err.message)}
