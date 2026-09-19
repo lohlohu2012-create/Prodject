@@ -42,6 +42,8 @@
 		var best = null;
 		var workerTimer = null;
 		var progress = 0;
+		var displayCounter = 0;
+		var lastDisplayTime = 0;
 		
 		this.parsesvg = function(svgstring){
 			// reset if in progress
@@ -561,25 +563,30 @@
 						}
 					}
 					
+					var isBest = false;
 					if(!best || bestresult.fitness < best.fitness){
 						best = bestresult;
-						
-						var placedArea = 0;
-						var totalArea = 0;
-						var numParts = placelist.length;
-						var numPlacedParts = 0;
-						
-						for(i=0; i<best.placements.length; i++){
-							totalArea += Math.abs(GeometryUtil.polygonArea(binPolygon));
-							for(var j=0; j<best.placements[i].length; j++){
-								placedArea += Math.abs(GeometryUtil.polygonArea(tree[best.placements[i][j].id]));
-								numPlacedParts++;
-							}
-						}
-						displayCallback(self.applyPlacement(best.placements), placedArea/totalArea, numPlacedParts, numParts);
+						isBest = true;
 					}
-					else{
-						displayCallback();
+
+					var placedArea = 0;
+					var totalArea = 0;
+					var numParts = placelist.length;
+					var numPlacedParts = 0;
+
+					for(i=0; i<bestresult.placements.length; i++){
+						totalArea += Math.abs(GeometryUtil.polygonArea(binPolygon));
+						for(var j=0; j<bestresult.placements[i].length; j++){
+							placedArea += Math.abs(GeometryUtil.polygonArea(tree[bestresult.placements[i][j].id]));
+							numPlacedParts++;
+						}
+					}
+
+					var now = Date.now();
+					var shouldDisplay = isBest || (now - lastDisplayTime >= 220);
+					if(shouldDisplay && typeof displayCallback === 'function'){
+						lastDisplayTime = now;
+						displayCallback(self.applyPlacement(bestresult.placements), placedArea/totalArea, numPlacedParts, numParts, isBest, ++displayCounter);
 					}
 					self.working = false;
 				}, function (err) {
