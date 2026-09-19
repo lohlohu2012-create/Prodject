@@ -74,7 +74,7 @@ function decorateResultSvg(svg,meta,sheetIndex){
     if(!match)return;
     const rawX=Number(match[1]), rawY=Number(match[2]);
     const x=rawX+margin, y=rawY+margin;
-    const shifted=raw.replace(/translate\\(([-+\\d.eE]+)[ ,]+([-+\\d.eE]+)/, `translate(${x} ${y}`);
+    const shifted=raw.replace(/translate\(([-+\d.eE]+)[ ,]+([-+\d.eE]+)/, `translate(${x} ${y}`);
     group.setAttribute("transform", shifted);
     const wrapper=document.createElementNS(ns,"g");
     const dot=document.createElementNS(ns,"circle");dot.setAttribute("cx",x);dot.setAttribute("cy",y);dot.setAttribute("r","4.2");dot.setAttribute("fill","#111820");dot.setAttribute("opacity",".88");
