@@ -49,7 +49,7 @@ ENDSEC
 EOF
 """
 
-with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
+with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_errors=True) as tmp:
     tmp = Path(tmp)
     dxf_path = tmp / "sample.dxf"
     dxf_path.write_text(DXF, encoding="utf-8")
