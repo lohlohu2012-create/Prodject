@@ -62,7 +62,6 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
             "--no-sandbox",
             "--disable-gpu",
             "--disable-dev-shm-usage",
-            "--host-resolver-rules=MAP * 0.0.0.0,EXCLUDE localhost",
             "--remote-allow-origins=*",
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}",
@@ -115,6 +114,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
             return result["result"].get("value")
 
         cdp("Runtime.enable")
+        cdp("Network.enable")
         eval_js("window.__offlineErrors=[]; window.addEventListener('error', e => window.__offlineErrors.push(String(e.message || e.error || e)));")
 
         deadline = time.time() + 10
@@ -127,6 +127,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
 
         assert eval_js("location.protocol") == "file:"
         assert eval_js("document.title") == "SheetNest — Metal Nesting"
+        cdp("Network.emulateNetworkConditions", {"offline": True, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1})
 
         cdp("DOM.getDocument")
         node = cdp("DOM.querySelector", {"nodeId": 1, "selector": "#fileInput"})
