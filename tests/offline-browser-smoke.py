@@ -126,6 +126,22 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
             raise RuntimeError("HTML did not finish loading from file://")
 
         assert eval_js("location.protocol") == "file:"
+        assert eval_js("document.querySelectorAll('#shapeLibrary .shape-card').length") == 6
+        eval_js("""
+          const cards=Array.from(document.querySelectorAll('#shapeLibrary .shape-card'));
+          const rect=cards.find(card=>card.textContent.includes('Прямоугольник'));
+          const circle=cards.find(card=>card.textContent.includes('Круг'));
+          rect.querySelector('.shape-card-qty').value='2';
+          rect.querySelector('.shape-add').click();
+          circle.querySelector('.shape-card-qty').value='1';
+          circle.querySelector('.shape-add').click();
+        """)
+        assert eval_js("typeof state !== 'undefined' && state.libraryParts.length") == 2
+        assert eval_js("typeof state !== 'undefined' && state.libraryParts.find(item => item.id === 'rect').quantity") == 2
+        assert eval_js("typeof state !== 'undefined' && state.libraryParts.find(item => item.id === 'circle').quantity") == 1
+        assert eval_js("(() => { const svg=buildNestingSvg(600,400,1); return (svg.match(/data-sheetnest-shape=/g)||[]).length; })()") == 3
+        assert eval_js("(() => { const parsed=SvgNest.parsesvg(buildNestingSvg(600,400,1)); return Boolean(parsed && parsed.querySelector('#sheet-bin')); })()") is True
+        eval_js("document.getElementById('clearShapes').click()")
         assert eval_js("document.title") == "SheetNest — Metal Nesting"
         cdp("Network.emulateNetworkConditions", {"offline": True, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1})
 
