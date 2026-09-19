@@ -15,5 +15,7 @@ jobs:
       - run: npm install
       - run: node --check server.js
       - run: node --check public/app.js
+      - run: node --check public/nest/util/parallel.js
       - run: node --check public/nest/svgnest.js
       - run: node --check public/nest/svgparser.js
+      - run: node tests/offline-parallel-smoke.js
