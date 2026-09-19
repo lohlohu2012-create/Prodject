@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SheetNest</title>
+  <title>SheetNest — раскрой металла</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
       <h1>SheetNest</h1>
-      <div class="subtitle">Раскрой деталей · SVG / DXF / DWG</div>
+      <div class="subtitle">Оптимизированный раскрой металлического листа</div>
     </div>
     <div id="status" class="status">Готово</div>
   </header>
@@ -18,85 +18,110 @@
   <main class="layout">
     <aside class="panel">
       <section>
-        <h2>1. Чертёж</h2>
+        <h2>1. Чертёж детали</h2>
         <label class="file-button">
           <input id="fileInput" type="file" accept=".svg,.dxf,.dwg">
           Загрузить SVG / DXF / DWG
         </label>
         <div id="fileName" class="muted">Файл не выбран</div>
+        <div id="geometryInfo" class="muted">Геометрия не загружена</div>
       </section>
 
       <section>
-        <h2>2. Лист</h2>
-
-        <label>Формат
-          <select id="preset">
-            <option value="custom">Произвольный</option>
-            <option value="A4">A4</option>
-            <option value="A3">A3</option>
-            <option value="A2">A2</option>
-            <option value="A1">A1</option>
-            <option value="A0" selected>A0</option>
+        <h2>2. Металлический лист</h2>
+        <label>Материал
+          <select id="material">
+            <option>Сталь</option>
+            <option>Нержавеющая сталь</option>
+            <option>Алюминий</option>
+            <option>Оцинкованная сталь</option>
+            <option>Другое</option>
           </select>
         </label>
 
         <div class="grid2">
-          <label>Ширина, мм<input id="sheetW" type="number" value="841" min="1"></label>
-          <label>Высота, мм<input id="sheetH" type="number" value="1189" min="1"></label>
+          <label>Ширина, мм<input id="sheetW" type="number" value="1500" min="1" step="1"></label>
+          <label>Длина, мм<input id="sheetH" type="number" value="3000" min="1" step="1"></label>
         </div>
 
-        <label>Ориентация
+        <label>Толщина, мм
+          <input id="thickness" type="number" value="3" min="0.1" step="0.1">
+        </label>
+
+        <label>Ориентация листа
           <select id="orientation">
-            <option value="portrait">Книжная</option>
-            <option value="landscape">Альбомная</option>
+            <option value="fixed">Как указано</option>
+            <option value="auto">Автоматически сравнить оба варианта</option>
           </select>
         </label>
 
         <div class="grid2">
-          <label>Поле, мм<input id="margin" type="number" value="10" min="0" step="0.5"></label>
-          <label>Зазор, мм<input id="gap" type="number" value="3" min="0" step="0.5"></label>
+          <label>Поле от края, мм<input id="margin" type="number" value="10" min="0" step="0.5"></label>
+          <label>Зазор между деталями, мм<input id="gap" type="number" value="2" min="0" step="0.1"></label>
         </div>
       </section>
 
       <section>
-        <h2>3. Деталь</h2>
-        <label>Количество<input id="quantity" type="number" value="1" min="1" step="1"></label>
-        <label>Поворот
-          <select id="rotation">
-            <option value="0">0°</option>
-            <option value="90" selected>0° / 90°</option>
+        <h2>3. Производство</h2>
+        <label>Количество одинаковых деталей
+          <input id="quantity" type="number" value="10" min="1" step="1">
+        </label>
+
+        <label>Повороты деталей
+          <select id="rotations">
+            <option value="1">Только 0°</option>
+            <option value="2" selected>0° / 180°</option>
+            <option value="4">0° / 90° / 180° / 270°</option>
+            <option value="8">Каждые 45°</option>
           </select>
         </label>
+
+        <label>Качество поиска
+          <select id="quality">
+            <option value="fast">Быстро — 10 с</option>
+            <option value="balanced" selected>Баланс — 30 с</option>
+            <option value="max">Максимум — 90 с</option>
+          </select>
+        </label>
+
+        <div class="hint">
+          Сначала минимизируется количество листов, затем программа ищет максимально компактную раскладку.
+        </div>
       </section>
 
       <section>
-        <button id="nestButton" class="primary">Выполнить раскладку</button>
-        <button id="downloadButton" class="secondary" disabled>Скачать SVG</button>
+        <button id="nestButton" class="primary">Рассчитать раскрой</button>
+        <button id="stopButton" class="danger" disabled>Остановить поиск</button>
+        <button id="downloadButton" class="secondary" disabled>Скачать раскладку SVG</button>
       </section>
 
       <section class="stats">
         <div><span>Листов</span><strong id="statSheets">0</strong></div>
         <div><span>Деталей</span><strong id="statParts">0</strong></div>
-        <div><span>Использование</span><strong id="statEfficiency">0%</strong></div>
+        <div><span>Заполнение</span><strong id="statEfficiency">0%</strong></div>
       </section>
-
-      <p class="note">
-        Для точного промышленного раскроя следующий этап — перейти от раскладки по
-        ограничивающим прямоугольникам к полноценному NFP-nesting для кривых и
-        невыпуклых контуров.
-      </p>
     </aside>
 
     <section class="workspace">
       <div class="toolbar">
-        <span id="geometryInfo">Геометрия не загружена</span>
+        <div id="runInfo">Расчёт ещё не запускался.</div>
+        <div class="progress"><div id="progressBar"></div></div>
       </div>
       <div id="canvasWrap" class="canvas-wrap">
-        <div class="empty">Загрузите чертёж и задайте параметры листа.</div>
+        <div class="empty">Загрузите чертёж детали, задайте размер металлического листа и количество.</div>
       </div>
     </section>
   </main>
 
+  <script src="/nest/util/pathsegpolyfill.js"></script>
+  <script src="/nest/util/domparser.js"></script>
+  <script src="/nest/util/matrix.js"></script>
+  <script src="/nest/util/clipper.js"></script>
+  <script src="/nest/util/parallel.js"></script>
+  <script src="/nest/util/geometryutil.js"></script>
+  <script src="/nest/util/placementworker.js"></script>
+  <script src="/nest/svgparser.js"></script>
+  <script src="/nest/svgnest.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
