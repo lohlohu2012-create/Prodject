@@ -335,7 +335,7 @@
 					searchEdges: config.exploreConcave,
 					useHoles: config.useHoles
 				},
-				evalPath: 'util/eval.js'
+				evalPath: 'nest/util/eval.js'
 			});
 			
 			p.require('matrix.js');
@@ -538,7 +538,7 @@
 					env: {
 						self: worker
 					},
-					evalPath: 'util/eval.js'
+					evalPath: 'nest/util/eval.js'
 				});
 				
 				p2.require('json.js');
