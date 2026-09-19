@@ -473,6 +473,20 @@ function startOneRun(sheet,runDurationMs){
     },120);
   });
 }
+function betterNestingCandidate(next,best){
+  if(!best)return true;
+  const nextComplete=Number(next.placed||0)>=Number(next.total||0);
+  const bestComplete=Number(best.placed||0)>=Number(best.total||0);
+  if(nextComplete!==bestComplete)return nextComplete;
+  if(!nextComplete){
+    if(Number(next.placed||0)!==Number(best.placed||0))return Number(next.placed||0)>Number(best.placed||0);
+  }
+  const nextSheets=Array.isArray(next.results)?next.results.length:Infinity;
+  const bestSheets=Array.isArray(best.results)?best.results.length:Infinity;
+  if(nextSheets!==bestSheets)return nextSheets<bestSheets;
+  return Number(next.efficiency||0)>Number(best.efficiency||0);
+}
+
 async function runSearch(){
   if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
   if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
@@ -485,20 +499,53 @@ async function runSearch(){
     state.startedAt=Date.now();
     const runBest=await startOneRun(candidate,state.durationMs);
     if(runBest){
-      const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:candidate.w,sheetH:candidate.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(runBest.efficiency||0),placed:Number(runBest.placed||0),total:Number(runBest.total||0)};
-      const score=runBest.results.length*1000000-meta.efficiency;
-      if(!bestOverall||score<bestOverall.score)bestOverall={score,results:runBest.results,meta};
+      const current={
+        results:runBest.results,
+        efficiency:Number(runBest.efficiency||0),
+        placed:Number(runBest.placed||0),
+        total:Number(runBest.total||0),
+        sheet:{w:candidate.w,h:candidate.h},
+        frame:runBest.frame
+      };
+      if(betterNestingCandidate(current,bestOverall))bestOverall=current;
     }
   }
   try{SvgNest.stop()}catch(_){}
   state.running=false;$("nestButton").disabled=false;$("stopButton").disabled=true;
   if(bestOverall){
-    state.resultSvgs=bestOverall.results;state.bestResultSvgs=bestOverall.results;state.bestResultMeta=bestOverall.meta;state.resultMeta=bestOverall.meta;
-    renderResults(bestOverall.results,bestOverall.meta.efficiency,bestOverall.meta.placed,bestOverall.meta.total,{w:bestOverall.meta.sheetW,h:bestOverall.meta.sheetH},{mode:"final",frame:state.searchFrames,isBest:true});
-    $("runInfo").textContent=`Готово · ${bestOverall.results.length} лист(ов) · ${bestOverall.meta.placed}/${bestOverall.meta.total} деталей · ${Math.round(bestOverall.meta.efficiency*100)}% заполнение · просмотрено ${state.searchFrames} вариантов`;
-    $("progressBar").style.width="100%";status("Раскрой рассчитан");
-  }else{$("runInfo").textContent="Допустимую раскладку не удалось найти.";status("Нет результата");}
+    const complete=bestOverall.placed>=bestOverall.total;
+    const meta={
+      material:$("material").value,
+      thickness:readNumber("thickness",3),
+      sheetW:bestOverall.sheet.w,
+      sheetH:bestOverall.sheet.h,
+      margin:readNumber("margin",10),
+      gap:readNumber("gap",2),
+      efficiency:bestOverall.efficiency,
+      placed:bestOverall.placed,
+      total:bestOverall.total,
+      complete
+    };
+    state.resultSvgs=bestOverall.results;
+    state.bestResultSvgs=bestOverall.results;
+    state.bestResultMeta=meta;
+    state.resultMeta=meta;
+    renderResults(bestOverall.results,bestOverall.efficiency,bestOverall.placed,bestOverall.total,bestOverall.sheet,{mode:"final",frame:bestOverall.frame,isBest:complete});
+    if(complete){
+      $("runInfo").textContent=`Готово · ${bestOverall.results.length} лист(ов) · ${bestOverall.placed}/${bestOverall.total} деталей · ${Math.round(bestOverall.efficiency*100)}% заполнение · просмотрено ${state.searchFrames} вариантов`;
+      status("Раскрой рассчитан");
+    }else{
+      const missing=Math.max(0,bestOverall.total-bestOverall.placed);
+      $("runInfo").textContent=`Частичный результат · ${bestOverall.results.length} лист(ов) · ${bestOverall.placed}/${bestOverall.total} деталей · не размещено: ${missing}`;
+      status("Частичный раскрой");
+    }
+    $("progressBar").style.width="100%";
+  }else{
+    $("runInfo").textContent="Допустимую раскладку не удалось найти.";
+    status("Нет результата");
+  }
 }
+
 $("fileInput").addEventListener("change",async event=>{
   const files=Array.from(event.target.files||[]);if(!files.length)return;
   status("Загрузка CAD…");const imported=[],failed=[];
