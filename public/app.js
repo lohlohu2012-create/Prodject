@@ -1,4 +1,4 @@
-const state={sourceSvg:null,resultSvgs:[],resultMeta:null,running:false,startedAt:0,durationMs:0};
+const state={sourceSvg:null,libraryParts:[],resultSvgs:[],resultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -17,6 +17,121 @@ function updateSheetPreview(){
   $("previewMaterial").textContent=$("material").value+" · "+readNumber("thickness",3)+" мм";
 }
 
+const SHAPE_LIBRARY=[
+  {id:"rect",name:"Прямоугольник",size:"200 × 100 мм",w:200,h:100,kind:"rect"},
+  {id:"square",name:"Квадрат",size:"120 × 120 мм",w:120,h:120,kind:"square"},
+  {id:"circle",name:"Круг",size:"Ø 100 мм",w:100,h:100,kind:"circle"},
+  {id:"triangle",name:"Треугольник",size:"140 × 120 мм",w:140,h:120,kind:"triangle"},
+  {id:"hex",name:"Шестиугольник",size:"120 × 104 мм",w:120,h:104,kind:"hex"},
+  {id:"roundrect",name:"Скруглённый прямоугольник",size:"220 × 100 мм",w:220,h:100,kind:"roundrect"}
+];
+
+function roundedRectPath(w,h,r){
+  const points=[];
+  const corners=[[w-r,r,Math.PI*1.5,Math.PI*2],[w-r,h-r,0,Math.PI/2],[r,h-r,Math.PI/2,Math.PI],[r,r,Math.PI,Math.PI*1.5]];
+  corners.forEach(corner=>{
+    const cx=corner[0],cy=corner[1],a0=corner[2],a1=corner[3],steps=4;
+    for(let i=0;i<=steps;i++){const a=a0+(a1-a0)*i/steps;points.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)})}
+  });
+  return "M "+points.map(p=>p.x.toFixed(2)+" "+p.y.toFixed(2)).join(" L ")+" Z";
+}
+
+function shapePath(shape){
+  if(shape.kind==="rect")return "M0 0 L200 0 L200 100 L0 100 Z";
+  if(shape.kind==="square")return "M0 0 L120 0 L120 120 L0 120 Z";
+  if(shape.kind==="triangle")return "M0 120 L70 0 L140 120 Z";
+  if(shape.kind==="hex")return "M25 0 L95 0 L120 52 L95 104 L25 104 L0 52 Z";
+  if(shape.kind==="roundrect")return roundedRectPath(220,100,20);
+  const points=[];
+  for(let i=0;i<48;i++){const angle=-Math.PI/2+i*(Math.PI*2/48);points.push({x:50+50*Math.cos(angle),y:50+50*Math.sin(angle)})}
+  return "M "+points.map(p=>p.x.toFixed(2)+" "+p.y.toFixed(2)).join(" L ")+" Z";
+}
+
+function shapePreview(shape){
+  return "<svg viewBox=\"0 0 "+shape.w+" "+shape.h+"\" aria-hidden=\"true\"><path d=\""+shapePath(shape)+"\"/></svg>";
+}
+
+function updateGeometryInfo(){
+  const chip=$("geometryInfo");
+  if(!chip)return;
+  const bits=[];
+  if(state.sourceSvg)bits.push("CAD/SVG");
+  if(state.libraryParts.length){
+    bits.push(...state.libraryParts.map(part=>{
+      const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
+      return (shape?shape.name:part.id)+" × "+part.quantity;
+    }));
+  }
+  if(!bits.length){
+    chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";
+    return;
+  }
+  chip.innerHTML="<span class=\"chip-dot\"></span><span>"+escapeHtml(bits.join(" · "))+"</span>";
+}
+
+function renderSelectedShapes(){
+  const wrap=$("selectedParts"),empty=$("selectedPartsEmpty");
+  if(!wrap||!empty)return;
+  wrap.querySelectorAll(".selected-part").forEach(node=>node.remove());
+  empty.style.display=state.libraryParts.length?"none":"block";
+  state.libraryParts.forEach(part=>{
+    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
+    if(!shape)return;
+    const item=document.createElement("div");
+    item.className="selected-part";
+    item.dataset.shapeId=part.id;
+    item.innerHTML="<div class=\"selected-part-thumb\">"+shapePreview(shape)+"</div><div class=\"selected-part-info\"><b>"+escapeHtml(shape.name)+"</b><small>"+escapeHtml(shape.size)+"</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+part.quantity+"\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(shape.name)+"\">×</button>";
+    item.querySelector(".selected-part-qty").addEventListener("change",event=>{
+      const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));
+      event.target.value=String(value);
+      const target=state.libraryParts.find(entry=>entry.id===part.id);
+      if(target)target.quantity=value;
+      updateGeometryInfo();
+    });
+    item.querySelector(".selected-part-remove").addEventListener("click",()=>{
+      state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);
+      renderSelectedShapes();updateGeometryInfo();
+    });
+    wrap.appendChild(item);
+  });
+}
+
+function setupShapeLibrary(){
+  const library=$("shapeLibrary");
+  if(!library||library.dataset.ready==="1")return;
+  library.dataset.ready="1";library.innerHTML="";
+  SHAPE_LIBRARY.forEach(shape=>{
+    const card=document.createElement("article");
+    card.className="shape-card";
+    card.innerHTML="<div class=\"shape-thumb\">"+shapePreview(shape)+"</div><div class=\"shape-card-copy\"><b>"+escapeHtml(shape.name)+"</b><small>"+escapeHtml(shape.size)+"</small></div><div class=\"shape-card-actions\"><input class=\"shape-card-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\"1\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"shape-add\" type=\"button\" title=\"Добавить в раскрой\" aria-label=\"Добавить "+escapeHtml(shape.name)+"\">+</button></div>";
+    card.querySelector(".shape-add").addEventListener("click",()=>{
+      const input=card.querySelector(".shape-card-qty");
+      const quantity=Math.max(1,Math.min(9999,Math.floor(Number(input.value)||1)));
+      input.value="1";
+      const existing=state.libraryParts.find(entry=>entry.id===shape.id);
+      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);else state.libraryParts.push({id:shape.id,quantity});
+      renderSelectedShapes();updateGeometryInfo();status("Фигура добавлена");
+    });
+    library.appendChild(card);
+  });
+  $("clearShapes")?.addEventListener("click",()=>{state.libraryParts=[];renderSelectedShapes();updateGeometryInfo()});
+  renderSelectedShapes();
+}
+
+function appendLibraryParts(root){
+  const ns="http://www.w3.org/2000/svg";
+  for(const part of state.libraryParts){
+    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
+    if(!shape)continue;
+    const d=shapePath(shape);
+    for(let copy=0;copy<Math.max(1,Math.floor(part.quantity));copy++){
+      const group=document.createElementNS(ns,"g");group.setAttribute("data-sheetnest-shape",shape.id);
+      const path=document.createElementNS(ns,"path");
+      path.setAttribute("d",d);path.setAttribute("fill","none");path.setAttribute("stroke","black");path.setAttribute("stroke-width",".2");
+      group.appendChild(path);root.appendChild(group);
+    }
+  }
+}
 function dxfNum(value,fallback=0){const n=Number(value);return Number.isFinite(n)?n:fallback}
 function dxfPoint(x,y){return{x:dxfNum(x),y:dxfNum(y)}}
 function dxfSame(a,b){return Math.hypot(a.x-b.x,a.y-b.y)<=0.01}
@@ -172,15 +287,20 @@ function buildNestingSvg(w,h,quantity){
   const margin=Math.max(0,readNumber("margin",10));
   const innerW=w-2*margin,innerH=h-2*margin;
   if(innerW<=0||innerH<=0)throw new Error("Поле от края больше размера металлического листа.");
-  const elements=sourceElements(state.sourceSvg),ns="http://www.w3.org/2000/svg";
+  const ns="http://www.w3.org/2000/svg";
   const root=document.createElementNS(ns,"svg");
   root.setAttribute("xmlns",ns);root.setAttribute("viewBox",`0 0 ${innerW} ${innerH}`);root.setAttribute("width",String(innerW));root.setAttribute("height",String(innerH));
   const bin=document.createElementNS(ns,"rect");bin.setAttribute("id","sheet-bin");bin.setAttribute("x","0");bin.setAttribute("y","0");bin.setAttribute("width",String(innerW));bin.setAttribute("height",String(innerH));root.appendChild(bin);
-  const repeat=Math.max(1,Math.floor(quantity));
-  for(let copy=0;copy<repeat;copy++)for(const element of elements){const clone=element.cloneNode(true);clone.removeAttribute("id");root.appendChild(clone)}
+
+  if(state.sourceSvg){
+    const elements=sourceElements(state.sourceSvg),repeat=Math.max(1,Math.floor(quantity));
+    for(let copy=0;copy<repeat;copy++){
+      for(const element of elements){const clone=element.cloneNode(true);clone.removeAttribute("id");root.appendChild(clone)}
+    }
+  }
+  appendLibraryParts(root);
   return new XMLSerializer().serializeToString(root);
 }
-
 function resetEngine(){
   try{SvgNest.stop()}catch(_){}
   const q=qualityConfig();
@@ -325,7 +445,7 @@ function startOneRun(sheet,runDurationMs){
 }
 
 async function runSearch(){
-  if(!state.sourceSvg)throw new Error("Сначала загрузите чертёж.");
+  if(!state.sourceSvg&&!state.libraryParts.length)throw new Error("Загрузите DXF/SVG или добавьте типовую деталь.");
   const sheet=getSheet(),q=qualityConfig(),orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
   $("nestButton").disabled=true;$("stopButton").disabled=false;$("downloadButton").disabled=true;status("Расчёт...");
   state.running=true;state.resultSvgs=[];state.resultMeta=null;state.durationMs=q.seconds*1000/orientations.length;$("progressBar").style.width="0%";
@@ -350,7 +470,7 @@ $("fileInput").addEventListener("change",async event=>{
     else if(ext==="dxf")svgText=dxfTextToSvg(await file.text());
     else throw new Error("Поддерживаются только DXF и SVG.");
     const elements=sourceElements(svgText);state.sourceSvg=svgText;
-    $("geometryInfo").innerHTML=`<span class="chip-dot"></span><span>Загружено элементов: ${elements.length}</span>`;status("Чертёж загружен");
+    $("geometryInfo").innerHTML=`<span class="chip-dot"></span><span>Загружено элементов: ${elements.length}</span>`;updateGeometryInfo();status("Чертёж загружен");
   }catch(err){state.sourceSvg=null;$("geometryInfo").innerHTML='<span class="chip-dot"></span><span>Ошибка импорта</span>';status("Ошибка");alert(err.message)}
 });
 
@@ -359,4 +479,4 @@ $("stopButton").addEventListener("click",()=>{state.running=false;try{SvgNest.st
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);decorateResultSvg(clone,state.resultMeta,index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
-setupCanvasZoom();updateSheetPreview();
+setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
