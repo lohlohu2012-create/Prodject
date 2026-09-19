@@ -114,6 +114,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
             return result["result"].get("value")
 
         cdp("Runtime.enable")
+        eval_js("window.__offlineErrors=[]; window.addEventListener('error', e => window.__offlineErrors.push(String(e.message || e.error || e)));")
 
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -160,7 +161,17 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
             if status == "Раскрой рассчитан":
                 break
             if status == "Ошибка" or "не удалось" in (run_info or "").lower():
-                raise RuntimeError(f"Nesting failed: status={status!r}, info={run_info!r}")
+                diagnostics = {
+                    "status": status,
+                    "runInfo": run_info,
+                    "geometry": eval_js("document.getElementById('geometryInfo').textContent"),
+                    "sourceSvgLength": eval_js("typeof state !== 'undefined' && state.sourceSvg ? state.sourceSvg.length : -1"),
+                    "resultCount": eval_js("typeof state !== 'undefined' ? state.resultSvgs.length : -1"),
+                    "engineWorking": eval_js("typeof SvgNest !== 'undefined' ? SvgNest.working : null"),
+                    "consoleErrors": eval_js("window.__offlineErrors || []"),
+                    "sourceSvg": eval_js("typeof state !== 'undefined' && state.sourceSvg ? state.sourceSvg : ''")
+                }
+                raise RuntimeError("Nesting failed: " + json.dumps(diagnostics, ensure_ascii=False))
             time.sleep(0.2)
         else:
             raise RuntimeError(f"Nesting timed out: status={status!r}, info={run_info!r}")
