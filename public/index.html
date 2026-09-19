@@ -24,12 +24,12 @@
           <div class="flow-label"><span>01</span><div><b>Контур детали</b><small>Исходный CAD</small></div></div>
 
           <label class="dropzone">
-            <input id="fileInput" type="file" accept=".svg,.dxf">
+            <input id="fileInput" type="file" accept=".svg,.dxf" multiple>
             <span class="drop-icon">
               <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </span>
             <strong>Загрузить DXF / SVG</strong>
-            <small>Перетащите файл сюда или выберите его</small>
+            <small>Можно выбрать сразу несколько файлов</small>
           </label>
 
           <div id="fileName" class="file-line">Файл не выбран</div>
@@ -42,7 +42,7 @@
           <div id="shapeLibrary" class="shape-library" aria-label="Библиотека типовых деталей"></div>
 
           <div class="selected-parts-head">
-            <span>Добавленные в раскрой</span>
+            <span>Детали в заказе · количество у каждой</span>
             <button id="clearShapes" class="clear-shapes" type="button">Очистить</button>
           </div>
           <div id="selectedParts" class="selected-parts">
@@ -115,13 +115,13 @@
         <section class="flow-group">
           <div class="flow-label"><span>04</span><div><b>Производство</b><small>Количество и поиск</small></div></div>
 
-          <div class="quantity-panel">
-            <div class="quantity-icon">×</div>
+          <div class="parts-summary-panel">
+            <div class="quantity-icon">Σ</div>
             <div class="quantity-copy">
-              <span>Нужно изготовить</span>
-              <strong>Одинаковых деталей</strong>
+              <span>Смешанный раскрой</span>
+              <strong>Количество задаётся у каждой детали выше</strong>
             </div>
-            <input id="quantity" type="number" value="10" min="1" step="1" class="quantity-input">
+            <strong id="partsTotal" class="parts-total">0</strong>
           </div>
 
           <div class="field">
