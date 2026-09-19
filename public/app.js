@@ -155,7 +155,7 @@ function dxfTextToSvg(text){
   const width=Math.max(1,bounds.maxX-bounds.minX+2*padding),height=Math.max(1,bounds.maxY-bounds.minY+2*padding);
   const paths=closed.map(c=>{
     const shifted=c.map(p=>({x:p.x-minX,y:p.y-maxY}));
-    return dxfPathFromPoints(shifted);
+    return "<path d=\"" + dxfPathFromPoints(shifted).replace(/"/g,"&quot;") + "\" />";
   }).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-contours="${closed.length}" data-open="${open.length}"><g fill="none" stroke="black" stroke-width="0.2">${paths}</g></svg>`;
 }
