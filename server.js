@@ -89,8 +89,7 @@ function dxfToSvg(dxf){
   const b=getBounds(data.closed),padding=1,minX=b.minX-padding,maxY=b.maxY+padding;
   const width=Math.max(1,b.maxX-b.minX+2*padding),height=Math.max(1,b.maxY-b.minY+2*padding);
   const paths=data.closed.map(c=>`<path d="${pathFromPoints(c,true)}" />`).join("");
-  const open=data.open.map(c=>`<path d="${pathFromPoints(c,false)}" data-open="true" />`).join("");
-  const content=`<g transform="translate(${-minX} ${maxY})">${paths}${open}</g>`;
+  const content=`<g transform="translate(${-minX} ${maxY})">${paths}</g>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-contours="${data.closed.length}" data-open="${data.open.length}"><g fill="none" stroke="black" stroke-width="0.2">${content}</g></svg>`;
 }
 
