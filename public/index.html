@@ -3,157 +3,190 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SheetNest — раскрой металла</title>
+  <title>SheetNest — Metal Nesting</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32"><path d="M6 8.5 16 4l10 4.5v15L16 28 6 23.5z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 8.5 16 13l10-4.5M16 13v15" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-      </div>
-      <div>
-        <h1>SheetNest</h1>
-        <div class="subtitle">Оптимизированный раскрой металлического листа</div>
-      </div>
-    </div>
-    <div class="status-pill"><span class="status-dot"></span><span id="status">Готово</span></div>
-  </header>
-
-  <main class="layout">
-    <aside class="panel">
-      <section class="menu-section">
-        <div class="section-heading"><span class="step-badge">01</span><div><h2>Чертёж</h2><p>Исходная геометрия детали</p></div></div>
-        <label class="upload-card">
-          <input id="fileInput" type="file" accept=".svg,.dxf">
-          <span class="upload-icon">↥</span>
-          <span class="upload-title">Загрузить DXF или SVG</span>
-          <span class="upload-subtitle">Поддерживается векторная геометрия</span>
-        </label>
-        <div id="fileName" class="file-name">Файл не выбран</div>
-        <div id="geometryInfo" class="geometry-chip"><span class="chip-dot"></span><span>Геометрия не загружена</span></div>
-      </section>
-
-      <section class="menu-section">
-        <div class="section-heading"><span class="step-badge">02</span><div><h2>Металлический лист</h2><p>Размер заготовки и технологические поля</p></div></div>
-
-        <label>Материал
-          <select id="material">
-            <option>Сталь</option>
-            <option>Нержавеющая сталь</option>
-            <option>Алюминий</option>
-            <option>Оцинкованная сталь</option>
-            <option>Другое</option>
-          </select>
-        </label>
-
-        <div class="grid2">
-          <label>Ширина, мм<input id="sheetW" type="number" value="1500" min="1" step="1"></label>
-          <label>Длина, мм<input id="sheetH" type="number" value="3000" min="1" step="1"></label>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="logo-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M7 9.2 16 5l9 4.2v13.6L16 27l-9-4.2z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 9.2 16 14l9-4.8M16 14v13" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
         </div>
+        <div>
+          <div class="logo-title">SheetNest</div>
+          <div class="logo-subtitle">Metal nesting studio</div>
+        </div>
+      </div>
 
-        <label>Толщина, мм<input id="thickness" type="number" value="3" min="0.1" step="0.1"></label>
+      <div class="sidebar-scroll">
+        <section class="flow-group">
+          <div class="flow-label"><span>01</span><div><b>Контур детали</b><small>Исходный CAD</small></div></div>
 
-        <div class="sheet-preview-card">
-          <div class="sheet-preview-meta">
-            <span>Предпросмотр листа</span>
-            <span id="previewMaterial">Сталь · 3 мм</span>
+          <label class="dropzone">
+            <input id="fileInput" type="file" accept=".svg,.dxf">
+            <span class="drop-icon">
+              <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <strong>Загрузить DXF / SVG</strong>
+            <small>Перетащите файл сюда или выберите его</small>
+          </label>
+
+          <div id="fileName" class="file-line">Файл не выбран</div>
+          <div id="geometryInfo" class="geometry-chip"><span class="chip-dot"></span><span>Геометрия не загружена</span></div>
+        </section>
+
+        <section class="flow-group">
+          <div class="flow-label"><span>02</span><div><b>Заготовка</b><small>Металлический лист</small></div></div>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Материал</span>
+              <select id="material">
+                <option>Сталь</option>
+                <option>Нержавеющая сталь</option>
+                <option>Алюминий</option>
+                <option>Оцинкованная сталь</option>
+                <option>Другое</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Толщина</span>
+              <div class="input-suffix"><input id="thickness" type="number" value="3" min="0.1" step="0.1"><em>мм</em></div>
+            </label>
           </div>
-          <div class="sheet-preview">
-            <div id="sheetShape" class="sheet-shape">
-              <span class="dim dim-top" id="previewW">1500 мм</span>
-              <span class="dim dim-side" id="previewH">3000 мм</span>
-              <span class="sheet-center-icon">▧</span>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Ширина</span>
+              <div class="input-suffix"><input id="sheetW" type="number" value="1500" min="1" step="1"><em>мм</em></div>
+            </label>
+            <label class="field">
+              <span>Длина</span>
+              <div class="input-suffix"><input id="sheetH" type="number" value="3000" min="1" step="1"><em>мм</em></div>
+            </label>
+          </div>
+
+          <div class="sheet-card">
+            <div class="sheet-card-top">
+              <div><span class="eyebrow">ЛИСТ</span><b id="previewMaterial">Сталь · 3 мм</b></div>
+              <span class="sheet-card-badge">mm</span>
+            </div>
+            <div class="sheet-visual">
+              <div id="sheetShape" class="sheet-shape">
+                <span id="previewW" class="sheet-dim sheet-dim-top">1500</span>
+                <span id="previewH" class="sheet-dim sheet-dim-right">3000</span>
+                <span class="sheet-grain"></span>
+                <span class="sheet-grain vertical"></span>
+                <span class="sheet-corner c1"></span><span class="sheet-corner c2"></span>
+                <span class="sheet-corner c3"></span><span class="sheet-corner c4"></span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <label>Ориентация
-          <select id="orientation">
-            <option value="fixed">Как указано</option>
-            <option value="auto">Сравнить оба варианта</option>
-          </select>
-        </label>
-
-        <div class="grid2">
-          <label>Поле от края, мм<input id="margin" type="number" value="10" min="0" step="0.5"></label>
-          <label>Зазор между деталями, мм<input id="gap" type="number" value="2" min="0" step="0.1"></label>
-        </div>
-      </section>
-
-      <section class="menu-section">
-        <div class="section-heading"><span class="step-badge">03</span><div><h2>Производство</h2><p>Количество и стратегия поиска</p></div></div>
-
-        <div class="quantity-card">
-          <div class="quantity-icon">×</div>
-          <div class="quantity-body">
-            <span>Деталей нужно изготовить</span>
-            <input id="quantity" type="number" value="10" min="1" step="1">
+          <div class="field">
+            <span>Ориентация</span>
+            <select id="orientation">
+              <option value="fixed">Фиксированная</option>
+              <option value="auto">Сравнить 0° / 90°</option>
+            </select>
           </div>
-        </div>
 
-        <label>Повороты детали
-          <select id="rotations">
-            <option value="1">Только 0°</option>
-            <option value="2" selected>0° / 180°</option>
-            <option value="4">0° / 90° / 180° / 270°</option>
-            <option value="8">Каждые 45°</option>
-          </select>
-        </label>
+          <div class="field-grid">
+            <label class="field"><span>Поле</span><div class="input-suffix"><input id="margin" type="number" value="10" min="0" step="0.5"><em>мм</em></div></label>
+            <label class="field"><span>Зазор</span><div class="input-suffix"><input id="gap" type="number" value="2" min="0" step="0.1"><em>мм</em></div></label>
+          </div>
+        </section>
 
-        <label>Качество поиска
-          <select id="quality">
-            <option value="fast">Быстро · ~10 с</option>
-            <option value="balanced" selected>Баланс · ~30 с</option>
-            <option value="max">Максимум · ~90 с</option>
-          </select>
-        </label>
+        <section class="flow-group">
+          <div class="flow-label"><span>03</span><div><b>Производство</b><small>Количество и поиск</small></div></div>
 
-        <div class="optimization-note">
-          <div class="optimization-icon">◎</div>
-          <div><strong>Цель оптимизации</strong><br>минимум листов → максимум заполнения → компактная геометрия раскладки</div>
-        </div>
-      </section>
+          <div class="quantity-panel">
+            <div class="quantity-icon">×</div>
+            <div class="quantity-copy">
+              <span>Нужно изготовить</span>
+              <strong>Одинаковых деталей</strong>
+            </div>
+            <input id="quantity" type="number" value="10" min="1" step="1" class="quantity-input">
+          </div>
 
-      <section class="actions-section">
-        <button id="nestButton" class="primary action-btn"><span>Рассчитать раскрой</span><span class="arrow">→</span></button>
-        <button id="stopButton" class="danger action-btn" disabled><span>Остановить поиск</span><span>×</span></button>
-        <button id="downloadButton" class="secondary action-btn" disabled><span>Скачать раскладку SVG</span><span>↓</span></button>
-      </section>
+          <div class="field">
+            <span>Повороты детали</span>
+            <select id="rotations">
+              <option value="1">Только 0°</option>
+              <option value="2" selected>0° / 180°</option>
+              <option value="4">0° / 90° / 180° / 270°</option>
+              <option value="8">Каждые 45°</option>
+            </select>
+          </div>
 
-      <section class="stats-section">
-        <div class="stat-card"><span>Листов</span><strong id="statSheets">0</strong></div>
-        <div class="stat-card"><span>Деталей</span><strong id="statParts">0</strong></div>
-        <div class="stat-card"><span>Заполнение</span><strong id="statEfficiency">0%</strong></div>
-      </section>
+          <div class="field">
+            <span>Режим оптимизации</span>
+            <select id="quality">
+              <option value="fast">Быстро · ~10 с</option>
+              <option value="balanced" selected>Баланс · ~30 с</option>
+              <option value="max">Максимум · ~90 с</option>
+            </select>
+          </div>
+
+          <div class="goal-box">
+            <div class="goal-ring">◎</div>
+            <div><b>Цель</b><span>минимум листов → максимум заполнения</span></div>
+          </div>
+        </section>
+
+        <section class="flow-group actions-group">
+          <button id="nestButton" class="btn btn-primary"><span>Рассчитать раскрой</span><span>→</span></button>
+          <button id="stopButton" class="btn btn-ghost danger" disabled><span>Остановить</span><span>×</span></button>
+          <button id="downloadButton" class="btn btn-ghost" disabled><span>Экспорт SVG</span><span>↓</span></button>
+        </section>
+
+        <section class="stats-grid">
+          <div class="stat-box"><small>Листы</small><strong id="statSheets">0</strong></div>
+          <div class="stat-box"><small>Детали</small><strong id="statParts">0</strong></div>
+          <div class="stat-box"><small>Заполнение</small><strong id="statEfficiency">0%</strong></div>
+        </section>
+      </div>
+
+      <div class="sidebar-foot"><span>NFP engine</span><span>·</span><span>DXF / SVG</span></div>
     </aside>
 
-    <section class="workspace">
-      <div class="workspace-toolbar">
-        <div class="workspace-title">
-          <div class="workspace-title-icon">⌗</div>
-          <div><strong>Результат раскроя</strong><span id="runInfo">Ожидает запуск расчёта</span></div>
+    <main class="main">
+      <header class="workspace-head">
+        <div>
+          <div class="workspace-kicker">NESTING WORKSPACE</div>
+          <h1>Раскладка металлического листа</h1>
+          <p>Оптимизированное размещение деталей по реальному контуру.</p>
         </div>
-        <div class="toolbar-right">
-          <span class="toolbar-hint">NFP nesting</span>
-          <div class="progress"><div id="progressBar"></div></div>
+        <div class="workspace-status"><span class="live-dot"></span><span id="status">Готово</span></div>
+      </header>
+
+      <div class="workbar">
+        <div class="workbar-left">
+          <div class="work-icon">
+            <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 5v14M16 5v14M4 10h16" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <div><b>Результат раскроя</b><span id="runInfo">Ожидает запуск расчёта</span></div>
         </div>
+        <div class="progress-wrap"><span class="progress-label">SEARCH</span><div class="progress"><div id="progressBar"></div></div></div>
       </div>
 
-      <div id="canvasWrap" class="canvas-wrap">
-        <div class="empty-state">
-          <div class="empty-illustration">
-            <div class="empty-sheet"></div>
-            <div class="empty-part part-a"></div>
-            <div class="empty-part part-b"></div>
-            <div class="empty-part part-c"></div>
+      <section id="canvasWrap" class="canvas-wrap">
+        <div class="canvas-empty">
+          <div class="empty-grid">
+            <span class="eg-line l1"></span><span class="eg-line l2"></span><span class="eg-line l3"></span><span class="eg-line l4"></span>
+            <div class="empty-metal">
+              <div class="empty-detail d1"></div><div class="empty-detail d2"></div><div class="empty-detail d3"></div>
+              <div class="empty-cut"></div>
+            </div>
           </div>
-          <h3>Задайте параметры раскроя</h3>
-          <p>Загрузите DXF/SVG, укажите размер металлического листа и количество деталей. Здесь появятся все листы с оптимизированной раскладкой.</p>
+          <h2>Рабочее поле пусто</h2>
+          <p>Загрузите DXF или SVG и задайте параметры листа слева. После расчёта здесь появится каждый лист с реальной раскладкой деталей.</p>
+          <div class="empty-tags"><span>DXF</span><span>SVG</span><span>NFP</span><span>Multi-sheet</span></div>
         </div>
-      </div>
-    </section>
-  </main>
+      </section>
+    </main>
+  </div>
 
   <script src="/nest/util/pathsegpolyfill.js"></script>
   <script src="/nest/util/domparser.js"></script>
