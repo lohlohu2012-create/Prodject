@@ -65,26 +65,29 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
             "--remote-allow-origins=*",
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}",
-            "about:blank",
+            str((ROOT / "public" / "index.html").resolve()),
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
     try:
-        version_url = f"http://127.0.0.1:{port}/json/version"
+        list_url = f"http://127.0.0.1:{port}/json/list"
         deadline = time.time() + 15
-        version = None
+        target = None
         while time.time() < deadline:
             try:
-                version = json.load(urllib.request.urlopen(version_url, timeout=1))
-                break
+                targets = json.load(urllib.request.urlopen(list_url, timeout=1))
+                target = next((item for item in targets if item.get("type") == "page" and "webSocketDebuggerUrl" in item), None)
+                if target:
+                    break
             except Exception:
-                time.sleep(0.2)
-        if not version:
-            raise RuntimeError("Chromium remote debugging did not start")
+                pass
+            time.sleep(0.2)
+        if not target:
+            raise RuntimeError("Chromium page target did not start")
 
-        ws = websocket.create_connection(version["webSocketDebuggerUrl"], timeout=5)
+        ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=5)
         counter = [0]
 
         def cdp(method, params=None, wait=True):
@@ -110,9 +113,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-") as tmp:
                 raise RuntimeError(str(result["exceptionDetails"]))
             return result["result"].get("value")
 
-        cdp("Page.enable")
         cdp("Runtime.enable")
-        cdp("Page.navigate", {"url": (ROOT / "public" / "index.html").as_uri()})
 
         deadline = time.time() + 10
         while time.time() < deadline:
