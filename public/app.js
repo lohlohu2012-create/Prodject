@@ -1,4 +1,4 @@
-const state={sourceSvg:null,libraryParts:[],resultSvgs:[],resultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -50,52 +50,66 @@ function shapePath(shape){
 function shapePreview(shape){
   return "<svg viewBox=\"0 0 "+shape.w+" "+shape.h+"\" aria-hidden=\"true\"><path d=\""+shapePath(shape)+"\"/></svg>";
 }
-
-function updateGeometryInfo(){
-  const chip=$("geometryInfo");
-  if(!chip)return;
-  const bits=[];
-  if(state.sourceSvg)bits.push("CAD/SVG");
-  if(state.libraryParts.length){
-    bits.push(...state.libraryParts.map(part=>{
-      const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
-      return (shape?shape.name:part.id)+" × "+part.quantity;
-    }));
-  }
-  if(!bits.length){
-    chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";
-    return;
-  }
-  chip.innerHTML="<span class=\"chip-dot\"></span><span>"+escapeHtml(bits.join(" · "))+"</span>";
+function requestedPartCount(){
+  const custom=state.customParts.reduce((sum,part)=>sum+Math.max(1,Math.floor(part.quantity||1)),0);
+  const library=state.libraryParts.reduce((sum,part)=>sum+Math.max(1,Math.floor(part.quantity||1)),0);
+  return custom+library;
 }
 
+function appendSourcePreview(container,svgText){
+  try{
+    const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"),root=doc.documentElement;
+    if(!root||root.nodeName.toLowerCase()!=="svg")return;
+    const preview=document.createElementNS("http://www.w3.org/2000/svg","svg");
+    preview.setAttribute("viewBox",root.getAttribute("viewBox")||"0 0 "+(root.getAttribute("width")||100)+" "+(root.getAttribute("height")||100));
+    preview.setAttribute("aria-hidden","true");preview.classList.add("part-preview-svg");
+    Array.from(root.children).filter(node=>!["defs","style","title","desc","metadata","script"].includes(node.tagName.toLowerCase())).forEach(node=>preview.appendChild(node.cloneNode(true)));
+    container.appendChild(preview);
+  }catch(_){}
+}
+
+function addCustomPartCard(item){
+  const wrap=$("selectedParts");if(!wrap)return;
+  const row=document.createElement("div");row.className="selected-part selected-part-cad";row.dataset.partId=item.id;
+  row.innerHTML="<div class=\"selected-part-thumb cad-thumb\"></div><div class=\"selected-part-info\"><b>"+escapeHtml(item.name)+"</b><small>CAD · "+item.elementsCount+" контур(ов)</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+item.quantity+"\" aria-label=\"Количество "+escapeHtml(item.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(item.name)+"\">×</button>";
+  appendSourcePreview(row.querySelector(".cad-thumb"),item.svgText);
+  row.querySelector(".selected-part-qty").addEventListener("change",event=>{
+    const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));event.target.value=String(value);
+    const target=state.customParts.find(entry=>entry.id===item.id);if(target)target.quantity=value;updateGeometryInfo();
+  });
+  row.querySelector(".selected-part-remove").addEventListener("click",()=>{
+    state.customParts=state.customParts.filter(entry=>entry.id!==item.id);renderSelectedShapes();updateGeometryInfo();
+  });
+  wrap.appendChild(row);
+}
+
+function updateGeometryInfo(){
+  const chip=$("geometryInfo"),fileLine=$("fileName");
+  if(!chip)return;
+  const bits=[];
+  if(state.customParts.length)bits.push(...state.customParts.map(part=>part.name+" × "+part.quantity));
+  if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);return (shape?shape.name:part.id)+" × "+part.quantity;}));
+  if(fileLine)fileLine.textContent=state.customParts.length?state.customParts.length+" CAD-файл(ов): "+state.customParts.map(part=>part.name).join(", "):"Файл не выбран";
+  if(!bits.length){chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";return;}
+  chip.innerHTML="<span class=\"chip-dot\"></span><span>"+escapeHtml(bits.join(" · "))+"</span>";
+}
 function renderSelectedShapes(){
-  const wrap=$("selectedParts"),empty=$("selectedPartsEmpty");
-  if(!wrap||!empty)return;
+  const wrap=$("selectedParts"),empty=$("selectedPartsEmpty");if(!wrap||!empty)return;
   wrap.querySelectorAll(".selected-part").forEach(node=>node.remove());
-  empty.style.display=state.libraryParts.length?"none":"block";
+  const hasParts=state.customParts.length||state.libraryParts.length;empty.style.display=hasParts?"none":"block";
+  state.customParts.forEach(addCustomPartCard);
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
-    if(!shape)return;
-    const item=document.createElement("div");
-    item.className="selected-part";
-    item.dataset.shapeId=part.id;
-    item.innerHTML="<div class=\"selected-part-thumb\">"+shapePreview(shape)+"</div><div class=\"selected-part-info\"><b>"+escapeHtml(shape.name)+"</b><small>"+escapeHtml(shape.size)+"</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+part.quantity+"\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(shape.name)+"\">×</button>";
+    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
+    const item=document.createElement("div");item.className="selected-part";item.dataset.shapeId=part.id;
+    item.innerHTML="<div class=\"selected-part-thumb\">"+shapePreview(shape)+"</div><div class=\"selected-part-info\"><b>"+escapeHtml(shape.name)+"</b><small>Типовая · "+escapeHtml(shape.size)+"</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+part.quantity+"\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(shape.name)+"\">×</button>";
     item.querySelector(".selected-part-qty").addEventListener("change",event=>{
-      const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));
-      event.target.value=String(value);
-      const target=state.libraryParts.find(entry=>entry.id===part.id);
-      if(target)target.quantity=value;
-      updateGeometryInfo();
+      const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));event.target.value=String(value);
+      const target=state.libraryParts.find(entry=>entry.id===part.id);if(target)target.quantity=value;updateGeometryInfo();
     });
-    item.querySelector(".selected-part-remove").addEventListener("click",()=>{
-      state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);
-      renderSelectedShapes();updateGeometryInfo();
-    });
+    item.querySelector(".selected-part-remove").addEventListener("click",()=>{state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);renderSelectedShapes();updateGeometryInfo()});
     wrap.appendChild(item);
   });
 }
-
 function setupShapeLibrary(){
   const library=$("shapeLibrary");
   if(!library||library.dataset.ready==="1")return;
@@ -116,6 +130,16 @@ function setupShapeLibrary(){
   });
   $("clearShapes")?.addEventListener("click",()=>{state.libraryParts=[];renderSelectedShapes();updateGeometryInfo()});
   renderSelectedShapes();
+}
+
+function appendCustomParts(root){
+  const ns="http://www.w3.org/2000/svg";
+  for(const part of state.customParts){
+    const elements=sourceElements(part.svgText),repeat=Math.max(1,Math.floor(part.quantity||1));
+    for(let copy=0;copy<repeat;copy++){
+      for(const element of elements){const clone=element.cloneNode(true);clone.removeAttribute("id");clone.setAttribute("data-sheetnest-source",part.id);root.appendChild(clone)}
+    }
+  }
 }
 
 function appendLibraryParts(root){
@@ -283,22 +307,13 @@ function sourceElements(svgText){
   return result.map(node=>node.cloneNode(true));
 }
 
-function buildNestingSvg(w,h,quantity){
-  const margin=Math.max(0,readNumber("margin",10));
-  const innerW=w-2*margin,innerH=h-2*margin;
+function buildNestingSvg(w,h){
+  const margin=Math.max(0,readNumber("margin",10)),innerW=w-2*margin,innerH=h-2*margin;
   if(innerW<=0||innerH<=0)throw new Error("Поле от края больше размера металлического листа.");
-  const ns="http://www.w3.org/2000/svg";
-  const root=document.createElementNS(ns,"svg");
+  const ns="http://www.w3.org/2000/svg",root=document.createElementNS(ns,"svg");
   root.setAttribute("xmlns",ns);root.setAttribute("viewBox",`0 0 ${innerW} ${innerH}`);root.setAttribute("width",String(innerW));root.setAttribute("height",String(innerH));
   const bin=document.createElementNS(ns,"rect");bin.setAttribute("id","sheet-bin");bin.setAttribute("x","0");bin.setAttribute("y","0");bin.setAttribute("width",String(innerW));bin.setAttribute("height",String(innerH));root.appendChild(bin);
-
-  if(state.sourceSvg){
-    const elements=sourceElements(state.sourceSvg),repeat=Math.max(1,Math.floor(quantity));
-    for(let copy=0;copy<repeat;copy++){
-      for(const element of elements){const clone=element.cloneNode(true);clone.removeAttribute("id");root.appendChild(clone)}
-    }
-  }
-  appendLibraryParts(root);
+  appendCustomParts(root);appendLibraryParts(root);
   return new XMLSerializer().serializeToString(root);
 }
 function resetEngine(){
@@ -407,73 +422,99 @@ function setupCanvasZoom(){
   updateCanvasZoomUi();
 }
 
-function renderResults(svgList,efficiency,placed,total,sheet){
+function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",frame:0,isBest:false}){
   const wrap=$("canvasWrap");wrap.innerHTML="";
-  const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:sheet.w,sheetH:sheet.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(efficiency||0),placed:Number(placed||0),total:Number(total||0)};
+  const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:sheet.w,sheetH:sheet.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(efficiency||0),placed:Number(placed||0),total:Number(total||0),mode:view.mode,frame:view.frame,isBest:Boolean(view.isBest)};
   state.resultMeta=meta;
-
+  wrap.classList.toggle("searching",view.mode==="search");
   svgList.forEach((svg,index)=>{
-    const card=document.createElement("div");card.className="result-card";
+    const card=document.createElement("div");card.className="result-card"+(view.mode==="search"?" search-frame":"");
     const title=document.createElement("div");title.className="result-title";
-    title.innerHTML=`<strong>Лист ${index+1}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
-    const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
-    decorateResultSvg(clone,meta,index);
+    const phase=view.mode==="search"?(view.isBest?"Новый лучший вариант":"Текущий кандидат"):"Итоговая раскладка";
+    title.innerHTML=`<strong>Лист ${index+1} · ${phase}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
+    const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");decorateResultSvg(clone,meta,index);
     card.appendChild(title);card.appendChild(clone);
-    const summary=document.createElement("div");summary.className="sheet-summary";
-    summary.innerHTML=`<span>Поле: <strong>${meta.margin} мм</strong> · зазор: <strong>${meta.gap} мм</strong></span><span>Деталей на листе: <strong>${Math.round((placed||0)/Math.max(1,svgList.length))}</strong></span>`;
-    card.appendChild(summary);wrap.appendChild(card);
+    const summary=document.createElement("div");summary.className="sheet-summary";summary.innerHTML=`<span>Поле: <strong>${meta.margin} мм</strong> · зазор: <strong>${meta.gap} мм</strong></span><span>Деталей: <strong>${placed||0}/${total||0}</strong></span>`;card.appendChild(summary);wrap.appendChild(card);
   });
-
-  $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0;applyCanvasZoom();
+  $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0||state.running;applyCanvasZoom();
 }
-
 function updateProgress(){
   if(!state.running)return;
   const elapsed=Date.now()-state.startedAt,p=Math.min(1,elapsed/state.durationMs);
   $("progressBar").style.width=`${Math.round(p*100)}%`;
-  $("runInfo").textContent=`Ищем более компактную раскладку… ${Math.max(0,Math.ceil((state.durationMs-elapsed)/1000))} с`;
+  $("runInfo").textContent=`Перебираем раскладки · кадр ${state.searchFrames} · осталось ${Math.max(0,Math.ceil((state.durationMs-elapsed)/1000))} с`;
 }
 
 function startOneRun(sheet,runDurationMs){
   resetEngine();
-  const quantity=Math.max(1,Math.floor(readNumber("quantity",1)));
-  const parsed=SvgNest.parsesvg(buildNestingSvg(sheet.w,sheet.h,quantity));
-  const bin=parsed.querySelector("#sheet-bin");if(!bin)throw new Error("Не удалось создать металлический лист.");
+  const parsed=SvgNest.parsesvg(buildNestingSvg(sheet.w,sheet.h)),bin=parsed.querySelector("#sheet-bin");
+  if(!bin)throw new Error("Не удалось создать металлический лист.");
   SvgNest.setbin(bin);
-  SvgNest.start(progress=>{if(state.running)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`},(svglist,efficiency,placed,total)=>{if(!svglist||!svglist.length)return;state.resultSvgs=svglist;renderResults(svglist,efficiency,placed,total,sheet);$("runInfo").textContent=`Найден улучшенный вариант: ${svglist.length} лист(ов), ${placed||0}/${total||0} деталей`});
-  return new Promise(resolve=>{const timer=setInterval(()=>{if(!state.running){clearInterval(timer);resolve();return}updateProgress();if(Date.now()-state.startedAt>=runDurationMs){clearInterval(timer);try{SvgNest.stop()}catch(_){}resolve()}},200)});
+  let runBest=null;
+  SvgNest.start(
+    progress=>{if(state.running)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`;},
+    (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
+      if(!svglist||!svglist.length)return;
+      state.searchFrames++;
+      if(isBest){state.bestFrames++;runBest={results:svglist,efficiency,placed,total,sheet:{w:sheet.w,h:sheet.h},frame};}
+      state.resultSvgs=svglist;
+      renderResults(svglist,efficiency,placed,total,sheet,{mode:"search",frame,isBest});
+      const tag=isBest?"Новый лучший":"Кандидат";
+      $("runInfo").textContent=`${tag} · кадр ${state.searchFrames} · ${placed||0}/${total||0} деталей · ${Math.round((efficiency||0)*100)}% заполнение`;
+      $("status").textContent="Ищем раскладку…";
+    }
+  );
+  return new Promise(resolve=>{
+    const timer=setInterval(()=>{
+      if(!state.running){clearInterval(timer);resolve(runBest);return;}
+      updateProgress();
+      if(Date.now()-state.startedAt>=runDurationMs){clearInterval(timer);try{SvgNest.stop()}catch(_){}resolve(runBest);}
+    },120);
+  });
 }
-
 async function runSearch(){
-  if(!state.sourceSvg&&!state.libraryParts.length)throw new Error("Загрузите DXF/SVG или добавьте типовую деталь.");
+  if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
+  if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
   const sheet=getSheet(),q=qualityConfig(),orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
   $("nestButton").disabled=true;$("stopButton").disabled=false;$("downloadButton").disabled=true;status("Расчёт...");
-  state.running=true;state.resultSvgs=[];state.resultMeta=null;state.durationMs=q.seconds*1000/orientations.length;$("progressBar").style.width="0%";
-  let best=null;
+  state.running=true;state.resultSvgs=[];state.resultMeta=null;state.bestResultSvgs=[];state.bestResultMeta=null;state.searchFrames=0;state.bestFrames=0;state.durationMs=q.seconds*1000/orientations.length;$("progressBar").style.width="0%";
+  let bestOverall=null;
   for(const candidate of orientations){
     if(!state.running)break;
-    state.resultSvgs=[];state.startedAt=Date.now();await startOneRun(candidate,state.durationMs);
-    const meta=state.resultMeta;
-    if(meta&&state.resultSvgs.length){const score=state.resultSvgs.length*1000000-meta.efficiency;if(!best||score<best.score)best={score,results:state.resultSvgs,meta}}
+    state.startedAt=Date.now();
+    const runBest=await startOneRun(candidate,state.durationMs);
+    if(runBest){
+      const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:candidate.w,sheetH:candidate.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(runBest.efficiency||0),placed:Number(runBest.placed||0),total:Number(runBest.total||0)};
+      const score=runBest.results.length*1000000-meta.efficiency;
+      if(!bestOverall||score<bestOverall.score)bestOverall={score,results:runBest.results,meta};
+    }
   }
   try{SvgNest.stop()}catch(_){}
   state.running=false;$("nestButton").disabled=false;$("stopButton").disabled=true;
-  if(best){state.resultSvgs=best.results;state.resultMeta=best.meta;renderResults(best.results,best.meta.efficiency,best.meta.placed,best.meta.total,{w:best.meta.sheetW,h:best.meta.sheetH});$("runInfo").textContent=`Итог: ${best.results.length} лист(ов), ${best.meta.placed}/${best.meta.total} деталей. Показан лучший найденный вариант.`;$("progressBar").style.width="100%";status("Раскрой рассчитан")}else{$("runInfo").textContent="Допустимую раскладку не удалось найти.";status("Нет результата")}
+  if(bestOverall){
+    state.resultSvgs=bestOverall.results;state.bestResultSvgs=bestOverall.results;state.bestResultMeta=bestOverall.meta;state.resultMeta=bestOverall.meta;
+    renderResults(bestOverall.results,bestOverall.meta.efficiency,bestOverall.meta.placed,bestOverall.meta.total,{w:bestOverall.meta.sheetW,h:bestOverall.meta.sheetH},{mode:"final",frame:state.searchFrames,isBest:true});
+    $("runInfo").textContent=`Готово · ${bestOverall.results.length} лист(ов) · ${bestOverall.meta.placed}/${bestOverall.meta.total} деталей · ${Math.round(bestOverall.meta.efficiency*100)}% заполнение · просмотрено ${state.searchFrames} вариантов`;
+    $("progressBar").style.width="100%";status("Раскрой рассчитан");
+  }else{$("runInfo").textContent="Допустимую раскладку не удалось найти.";status("Нет результата");}
 }
-
 $("fileInput").addEventListener("change",async event=>{
-  const file=event.target.files?.[0];if(!file)return;
-  $("fileName").textContent=file.name;status("Загрузка...");
-  try{
-    const ext=file.name.split(".").pop().toLowerCase();let svgText;
-    if(ext==="svg")svgText=await file.text();
-    else if(ext==="dxf")svgText=dxfTextToSvg(await file.text());
-    else throw new Error("Поддерживаются только DXF и SVG.");
-    const elements=sourceElements(svgText);state.sourceSvg=svgText;
-    $("geometryInfo").innerHTML=`<span class="chip-dot"></span><span>Загружено элементов: ${elements.length}</span>`;updateGeometryInfo();status("Чертёж загружен");
-  }catch(err){state.sourceSvg=null;$("geometryInfo").innerHTML='<span class="chip-dot"></span><span>Ошибка импорта</span>';status("Ошибка");alert(err.message)}
+  const files=Array.from(event.target.files||[]);if(!files.length)return;
+  status("Загрузка CAD…");const imported=[],failed=[];
+  for(const file of files){
+    try{
+      const ext=file.name.split(".").pop().toLowerCase();let svgText;
+      if(ext==="svg")svgText=await file.text();else if(ext==="dxf")svgText=dxfTextToSvg(await file.text());else throw new Error("Поддерживаются только DXF и SVG.");
+      const elements=sourceElements(svgText);
+      imported.push({id:"cad-"+Date.now()+"-"+Math.random().toString(36).slice(2),name:file.name,svgText,quantity:1,elementsCount:elements.length});
+    }catch(err){failed.push(file.name+": "+err.message);}
+  }
+  if(imported.length){
+    state.customParts.push(...imported);renderSelectedShapes();updateGeometryInfo();status("CAD загружен");
+    if(failed.length)alert("Не удалось загрузить:\n"+failed.join("\n"));
+  }else{status("Ошибка");alert(failed.length?failed.join("\n"):"Не удалось загрузить файлы.");}
+  event.target.value="";
 });
-
 $("nestButton").addEventListener("click",()=>runSearch().catch(err=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;status("Ошибка");alert(err.message)}));
 $("stopButton").addEventListener("click",()=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;$("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант.";status("Остановлено");$("progressBar").style.width="100%"});
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);decorateResultSvg(clone,state.resultMeta,index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
