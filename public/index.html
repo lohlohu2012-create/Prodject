@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SheetNest</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>SheetNest</h1>
+      <div class="subtitle">Раскрой деталей · SVG / DXF / DWG</div>
+    </div>
+    <div id="status" class="status">Готово</div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel">
+      <section>
+        <h2>1. Чертёж</h2>
+        <label class="file-button">
+          <input id="fileInput" type="file" accept=".svg,.dxf,.dwg">
+          Загрузить SVG / DXF / DWG
+        </label>
+        <div id="fileName" class="muted">Файл не выбран</div>
+      </section>
+
+      <section>
+        <h2>2. Лист</h2>
+
+        <label>Формат
+          <select id="preset">
+            <option value="custom">Произвольный</option>
+            <option value="A4">A4</option>
+            <option value="A3">A3</option>
+            <option value="A2">A2</option>
+            <option value="A1">A1</option>
+            <option value="A0" selected>A0</option>
+          </select>
+        </label>
+
+        <div class="grid2">
+          <label>Ширина, мм<input id="sheetW" type="number" value="841" min="1"></label>
+          <label>Высота, мм<input id="sheetH" type="number" value="1189" min="1"></label>
+        </div>
+
+        <label>Ориентация
+          <select id="orientation">
+            <option value="portrait">Книжная</option>
+            <option value="landscape">Альбомная</option>
+          </select>
+        </label>
+
+        <div class="grid2">
+          <label>Поле, мм<input id="margin" type="number" value="10" min="0" step="0.5"></label>
+          <label>Зазор, мм<input id="gap" type="number" value="3" min="0" step="0.5"></label>
+        </div>
+      </section>
+
+      <section>
+        <h2>3. Деталь</h2>
+        <label>Количество<input id="quantity" type="number" value="1" min="1" step="1"></label>
+        <label>Поворот
+          <select id="rotation">
+            <option value="0">0°</option>
+            <option value="90" selected>0° / 90°</option>
+          </select>
+        </label>
+      </section>
+
+      <section>
+        <button id="nestButton" class="primary">Выполнить раскладку</button>
+        <button id="downloadButton" class="secondary" disabled>Скачать SVG</button>
+      </section>
+
+      <section class="stats">
+        <div><span>Листов</span><strong id="statSheets">0</strong></div>
+        <div><span>Деталей</span><strong id="statParts">0</strong></div>
+        <div><span>Использование</span><strong id="statEfficiency">0%</strong></div>
+      </section>
+
+      <p class="note">
+        Для точного промышленного раскроя следующий этап — перейти от раскладки по
+        ограничивающим прямоугольникам к полноценному NFP-nesting для кривых и
+        невыпуклых контуров.
+      </p>
+    </aside>
+
+    <section class="workspace">
+      <div class="toolbar">
+        <span id="geometryInfo">Геометрия не загружена</span>
+      </div>
+      <div id="canvasWrap" class="canvas-wrap">
+        <div class="empty">Загрузите чертёж и задайте параметры листа.</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
