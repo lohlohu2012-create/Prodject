@@ -15,9 +15,9 @@
   <main class="card">
     <h1>SheetNest</h1>
     <p class="muted">Раскрой металлических листов: DXF / SVG, количество деталей, размер листа и оптимизированная NFP-раскладка.</p>
-    <p class="muted">Откройте приложение через локальный HTTP-сервер, чтобы корректно работали Web Workers и импорт DXF.</p>
+    <p class="muted">Node.js-сервер для импорта DXF больше не нужен: DXF и SVG обрабатываются прямо в браузере.</p>
     <div class="row"><a class="primary" href="public/index.html">Открыть приложение</a><a class="secondary" href="https://github.com/lohlohu2012-create/Prodject">GitHub</a></div>
-    <p class="muted" style="margin-top:20px">Запуск: <code>python -m http.server 8000</code>, затем <code>http://localhost:8000/public/</code>.</p>
+    <p class="muted" style="margin-top:20px">Для локального запуска просто откройте <code>public/index.html</code>. Для полноценной работы Web Workers в некоторых браузерах используйте любой статический HTTP-сервер.</p>
   </main>
 </body>
 </html>
