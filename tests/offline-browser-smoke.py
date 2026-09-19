@@ -127,6 +127,9 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
 
         assert eval_js("location.protocol") == "file:"
         assert eval_js("document.querySelectorAll('#shapeLibrary .shape-card').length") == 6
+        assert eval_js("betterNestingCandidate({results:[1,2],placed:2,total:2,efficiency:0.2},{results:[1],placed:1,total:2,efficiency:0.9})") is True
+        assert eval_js("betterNestingCandidate({results:[1],placed:1,total:2,efficiency:0.9},{results:[1,2],placed:2,total:2,efficiency:0.2})") is False
+        assert eval_js("betterNestingCandidate({results:[1],placed:1,total:2,efficiency:0.9},{results:[1],placed:0,total:2,efficiency:0.2})") is True
         eval_js("""
           const cards=Array.from(document.querySelectorAll('#shapeLibrary .shape-card'));
           const rect=cards.find(card=>card.textContent.includes('Прямоугольник'));
@@ -201,8 +204,8 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         parts = eval_js("document.getElementById('statParts').textContent")
         if int(sheets) < 1 or int(parts) < 1:
             raise RuntimeError(f"Unexpected nesting stats: sheets={sheets}, parts={parts}")
-        if int(parts) < 3:
-            raise RuntimeError(f"Mixed parts were not counted: parts={parts}")
+        if int(parts) != 3:
+            raise RuntimeError(f"Mixed parts were not all placed: parts={parts}")
         if int(frames) < 1:
             raise RuntimeError(f"Live nesting preview did not receive candidate frames: frames={frames}")
 
