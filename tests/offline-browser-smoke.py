@@ -160,7 +160,6 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         node = cdp("DOM.querySelector", {"nodeId": 1, "selector": "#fileInput"})
         node_id = node["nodeId"]
         cdp("DOM.setFileInputFiles", {"nodeId": node_id, "files": [str(dxf_path)]})
-        eval_js("document.querySelector('#fileInput').dispatchEvent(new Event('change', {bubbles:true}))")
 
         deadline = time.time() + 5
         while time.time() < deadline:
@@ -183,10 +182,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
           qualityConfig = () => ({seconds: 5, populationSize: 4, mutationRate: 1});
         """)
 
-        debug_counts = eval_js("({requested:requestedPartCount(), custom:state.customParts.map(p => ({name:p.name, quantity:p.quantity, nestingUnits:p.nestingUnits, contours:p.contours, holes:p.holes})), library:state.libraryParts.map(p => ({id:p.id, quantity:p.quantity}))})")
-        print("debug counts:", json.dumps(debug_counts, ensure_ascii=False))
-        if debug_counts["requested"] != 3:
-            raise RuntimeError("Unexpected requested count before nesting: " + json.dumps(debug_counts, ensure_ascii=False))
+        assert eval_js("requestedPartCount()") == 3
         eval_js("document.getElementById('nestButton').click()")
 
         deadline = time.time() + 15
