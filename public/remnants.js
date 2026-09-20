@@ -214,17 +214,21 @@
       const binPoly=bin?polygonifyElement(bin):null;
       const binArea=binPoly?area(binPoly):0;
       const remArea=Array.isArray(remnant?.polygon)?area(remnant.polygon):binArea;
-      const consumed=Math.max(0,remArea-freeArea);
-      const remainingPct=remArea>0?(freeArea/remArea)*100:0;
+      const greenArea=binArea;
+      const consumed=Math.max(0,greenArea-freeArea);
+      const remainingPct=greenArea>0?(freeArea/greenArea)*100:0;
+      const greenContourDiffPct=greenArea>0?(Math.abs(greenArea-remArea)/greenArea)*100:0;
       const overlapArea=freeArea;
-      const overlapPct=remArea>0?Math.min(100,(overlapArea/remArea)*100):0;
+      const overlapPct=greenArea>0?Math.min(100,(overlapArea/greenArea)*100):0;
       return {
         remnantArea:remArea,
+        greenArea,
         freeArea,
         consumedArea:consumed,
         remainingPct,
         overlapPct,
-        exactGeometry:Math.abs(remArea-freeArea)<0.01
+        greenContourDiffPct,
+        exactGeometry:greenContourDiffPct<0.01
       };
     }catch(err){
       console.warn("SheetNest: remnant/free comparison skipped",err);
@@ -565,7 +569,7 @@
         const statusClass=comparison.consumedArea>0.01?"warn":"ok";
         summary.innerHTML="<span>Фактическая свободная площадь: <strong>"+Math.round(comparison.freeArea)+" мм²</strong></span><span>Осталось от остатка: <strong>"+comparison.remainingPct.toFixed(1)+"%</strong></span><span>Использовано: <strong>"+Math.round(comparison.consumedArea)+" мм²</strong></span>";
         const check=document.createElement("div");check.className="geometry-check";
-        check.innerHTML="<span class='"+statusClass+"'>Геометрическое сравнение: "+statusText+"</span><span>Пересечение со зелёным контуром: "+comparison.overlapPct.toFixed(1)+"%</span>";
+        check.innerHTML="<span class='"+statusClass+"'>Геометрическое сравнение: "+statusText+"</span><span>Свободная область внутри зелёного контура: "+comparison.overlapPct.toFixed(1)+"%</span><span>Расхождение контура: "+comparison.greenContourDiffPct.toFixed(2)+"%</span>";
         summary.appendChild(check);
       }else{
         summary.innerHTML="<span>Фактическая свободная область: <strong>"+Math.round(polygonAreaSum(freePolys))+" мм²</strong></span><span>"+(remnant?"Деловой остаток":"Новый металлический лист")+" · зазор: <strong>"+meta.gap+" мм</strong></span>";
