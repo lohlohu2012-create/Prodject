@@ -563,6 +563,67 @@ function diagnosticStageLabel(entry){return entry.stage||"Импорт"}
 function diagnosticStatusClass(entry){
   return entry.status==="placed"?"ok":entry.status==="lost"||entry.status==="parser_error"?"bad":entry.status==="candidate"?"warn":"idle";
 }
+function diagnosticsSnapshot(){
+  const entries=diagnosticEntries();
+  const placed=entries.filter(e=>e.status==="placed").length;
+  const lost=entries.filter(e=>e.status==="lost"||e.status==="parser_error").length;
+  const candidate=entries.filter(e=>e.status==="candidate").length;
+  const totalUnits=entries.reduce((sum,e)=>sum+Number(e.expectedUnits||0),0);
+  const finalUnits=entries.reduce((sum,e)=>sum+e.finalUnitIds.length,0);
+  return {
+    schema:"sheetnest.instance-diagnostics.v1",
+    exportedAt:new Date().toISOString(),
+    runId:state.runId,
+    status:$("status")?.textContent||"",
+    summary:{instances:entries.length,placed,lost,candidate,totalUnits,finalUnits},
+    entries:entries.map(entry=>({
+      instanceId:entry.instanceId,
+      sourceId:entry.sourceId,
+      type:entry.type,
+      name:entry.name,
+      status:entry.status,
+      stage:entry.stage||"",
+      failureStage:(entry.status==="lost"||entry.status==="parser_error")?(entry.stage||""):"",
+      issue:entry.issue||"",
+      expectedUnits:Number(entry.expectedUnits||0),
+      unitIds:[...entry.unitIds],
+      candidateUnitIds:[...entry.candidateUnitIds],
+      bestCandidateUnitIds:[...entry.bestCandidateUnitIds],
+      finalUnitIds:[...entry.finalUnitIds],
+      candidateFrame:Number(entry.candidateFrame||0)
+    }))
+  };
+}
+function diagnosticsCsv(snapshot){
+  const columns=["instanceId","sourceId","type","name","status","stage","failureStage","issue","expectedUnits","unitIds","candidateUnitIds","bestCandidateUnitIds","finalUnitIds","candidateFrame"];
+  const cell=value=>"""+String(value??"").replace(/"/g,"""")+""";
+  const rows=snapshot.entries.map(entry=>[
+    entry.instanceId,entry.sourceId,entry.type,entry.name,entry.status,entry.stage,entry.failureStage,entry.issue,
+    entry.expectedUnits,entry.unitIds.join(" | "),entry.candidateUnitIds.join(" | "),
+    entry.bestCandidateUnitIds.join(" | "),entry.finalUnitIds.join(" | "),entry.candidateFrame
+  ].map(cell).join(";"));
+  return "\uFEFF"+columns.map(cell).join(";")+"\r\n"+rows.join("\r\n")+"\r\n";
+}
+function diagnosticsFileStamp(){
+  return new Date().toISOString().replace(/[:.]/g,"-").replace("T","_").replace("Z","");
+}
+function downloadDiagnosticsFile(content,type,extension){
+  const blob=new Blob([content],{type});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="sheetnest-instance-diagnostics-"+diagnosticsFileStamp()+"."+extension;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportDiagnosticsJSON(){
+  const snapshot=diagnosticsSnapshot();
+  downloadDiagnosticsFile(JSON.stringify(snapshot,null,2),"application/json;charset=utf-8","json");
+}
+function exportDiagnosticsCSV(){
+  const snapshot=diagnosticsSnapshot();
+  downloadDiagnosticsFile(diagnosticsCsv(snapshot),"text/csv;charset=utf-8","csv");
+}
 function initializeInstanceDiagnostics(){
   state.instanceDiagnostics={};
   state.unitToInstance={};
@@ -688,6 +749,9 @@ function renderDiagnosticsPanel(finalState=false){
   });
   const toggle=$("diagnosticsToggle");if(toggle)toggle.textContent=panel.classList.contains("collapsed")?"Развернуть":"Свернуть";
   const statusLabel=$("diagnosticsStatus");if(statusLabel)statusLabel.textContent=finalState?"Итоговая проверка":"Живая трассировка";
+  const jsonButton=$("diagnosticsExportJson"),csvButton=$("diagnosticsExportCsv");
+  if(jsonButton)jsonButton.disabled=false;
+  if(csvButton)csvButton.disabled=false;
 }
 function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",frame:0,isBest:false}){
   const wrap=$("canvasWrap");wrap.innerHTML="";
@@ -867,10 +931,16 @@ $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!
 function setupDiagnosticsPanel(){
   const panel=$("diagnosticsPanel"),toggle=$("diagnosticsToggle");
   if(!panel||!toggle)return;
+  $("diagnosticsExportJson")?.addEventListener("click",exportDiagnosticsJSON);
+  $("diagnosticsExportCsv")?.addEventListener("click",exportDiagnosticsCSV);
   toggle.addEventListener("click",()=>{
     panel.classList.toggle("collapsed");
     toggle.textContent=panel.classList.contains("collapsed")?"Развернуть":"Свернуть";
   });
+  if(!diagnosticEntries().length){
+    $("diagnosticsExportJson")?.setAttribute("disabled","");
+    $("diagnosticsExportCsv")?.setAttribute("disabled","");
+  }
 }
 setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
