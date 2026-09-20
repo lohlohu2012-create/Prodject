@@ -197,7 +197,11 @@
             <div class="diagnostics-kicker">INSTANCE TRACE</div>
             <div class="diagnostics-title-line"><h2>Диагностика раскроя</h2><span id="diagnosticsStatus">Живая трассировка</span></div>
           </div>
-          <button id="diagnosticsToggle" class="diagnostics-toggle" type="button">Свернуть</button>
+          <div class="diagnostics-actions">
+            <button id="diagnosticsExportJson" class="diagnostics-export" type="button" title="Экспорт диагностики в JSON">JSON</button>
+            <button id="diagnosticsExportCsv" class="diagnostics-export" type="button" title="Экспорт диагностики в CSV">CSV</button>
+            <button id="diagnosticsToggle" class="diagnostics-toggle" type="button">Свернуть</button>
+          </div>
         </div>
         <div id="diagnosticsBody" class="diagnostics-body">
           <div id="diagnosticsSummary" class="diagnostics-summary"></div>
