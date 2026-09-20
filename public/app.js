@@ -969,10 +969,3 @@ setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
 setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
 window.state=state
-  }finally{
-    state.running=false;
-    try{SvgNest.stop()}catch(_){}
-    $("nestButton").disabled=false;
-    $("stopButton").disabled=true;
-  }
-}
