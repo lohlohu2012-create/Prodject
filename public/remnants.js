@@ -274,7 +274,9 @@
         emit(1,best?.results,best?.efficiency,best?.placed,true);
         resolve(best);
       };
-      SvgNest.start(
+      timer=setTimeout(finish,seconds*1000);
+      try{
+        SvgNest.start(
         progress=>emit(progress,best?.results,best?.efficiency,best?.placed,false),
         (svglist,efficiency,placed,isBest=false,frame=0)=>{
           if(!svglist||!svglist.length)return;
@@ -284,8 +286,11 @@
           if(scoreCandidate(cand,best))best=cand;
           emit(Math.min(1,(Date.now()-started)/(seconds*1000)),svglist,efficiency,ids.length,isBest);
         }
-      );
-      timer=setTimeout(finish,seconds*1000);
+        );
+      }catch(err){
+        console.error("SheetNest SvgNest.start error:",err);
+        finish();
+      }
       watch=setInterval(()=>{
         if(!state.running)finish();
       },100);
@@ -395,10 +400,11 @@
     applyCanvasZoom();
   }
 
-  async function mixedRun(){
+  async function mixedRunCore(){
     if(state.running)return;
     if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
     const originalInstances=allInstances();if(!originalInstances.length)throw new Error("Количество деталей должно быть больше нуля.");
+    state.runAbortReason="";
     const originalRun=state.runId;state.runId=originalRun+1;state.expectedPartCount=originalInstances.length;state.nestingManifest=createNestingManifest();state.lastValidation=null;
     initializeInstanceDiagnostics();
     state.running=true;state.startedAt=Date.now();state.searchFrames=0;state.bestFrames=0;
@@ -519,6 +525,44 @@
     $("nestButton").disabled=false;$("stopButton").disabled=true;
     $("progressBar").style.width="100%";
     return {remaining};
+  }
+
+  async function mixedRun(){
+    const runToken=(state.runId||0)+1;
+    state.runId=runToken;
+    const started=Date.now();
+    const q=qualityConfig();
+    const hardLimit=Math.max(30000,Math.min(180000,Number(q.seconds||30)*4000));
+    let watchdog=null;
+    try{
+      state.running=true;
+      watchdog=setTimeout(()=>{
+        if(state.running&&state.runId===runToken){
+          state.runAbortReason="timeout";
+          state.running=false;
+          try{SvgNest.stop()}catch(_){}
+          $("runInfo").textContent="Расчёт остановлен по тайм-ауту";
+          status("Расчёт остановлен");
+        }
+      },hardLimit);
+      return await mixedRunCore();
+    }catch(err){
+      state.runAbortReason="error";
+      state.running=false;
+      try{SvgNest.stop()}catch(_){}
+      $("runInfo").textContent="Ошибка расчёта: "+(err?.message||String(err));
+      status("Ошибка расчёта");
+      throw err;
+    }finally{
+      if(watchdog)clearTimeout(watchdog);
+      state.running=false;
+      try{SvgNest.stop()}catch(_){}
+      $("nestButton").disabled=false;
+      $("stopButton").disabled=true;
+      if(state.runAbortReason==="timeout"){
+        $("progressBar").style.width="100%";
+      }
+    }
   }
 
   function init(){
