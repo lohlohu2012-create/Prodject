@@ -145,6 +145,93 @@
     }
   }
 
+  function actualFreePolygonsFromSvg(svg){
+    try{
+      if(!svg||typeof svg.cloneNode!=="function")return[];
+      const root=svg.cloneNode(true);
+      const bin=root.querySelector("#sheet-bin,.bin");
+      const sheetPoly=bin?polygonifyElement(bin):null;
+      if(!sheetPoly)return[];
+      let free=[sheetPoly];
+      const occupied=[];
+      root.querySelectorAll("[data-sheetnest-unit-id]").forEach(el=>{
+        if(el===bin)return;
+        const p=polygonifyElement(el);
+        if(p)occupied.push(p);
+      });
+      for(const p of occupied){
+        free=free.flatMap(f=>clipDifference([f],[p]));
+        if(!free.length)break;
+      }
+      return free.filter(p=>Array.isArray(p)&&p.length>=3&&area(p)>1);
+    }catch(err){
+      console.warn("SheetNest: actual free-area extraction skipped",err);
+      return[];
+    }
+  }
+
+  function polygonAreaSum(polys){
+    return (Array.isArray(polys)?polys:[]).reduce((sum,p)=>sum+(Array.isArray(p)?area(p):0),0);
+  }
+
+  function actualFreeOverlayGroup(svg,freePolygons,index){
+    try{
+      if(!svg||!Array.isArray(freePolygons)||!freePolygons.length)return null;
+      const ns="http://www.w3.org/2000/svg";
+      const g=document.createElementNS(ns,"g");
+      g.classList.add("free-area-overlay");
+      g.setAttribute("data-free-area-overlay",String(index));
+      freePolygons.forEach(poly=>{
+        if(!Array.isArray(poly)||poly.length<3)return;
+        const points=poly.map(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))?Number(p.x)+","+Number(p.y):null).filter(Boolean).join(" ");
+        if(!points)return;
+        const shape=document.createElementNS(ns,"polygon");
+        shape.setAttribute("points",points);
+        shape.classList.add("free-area-overlay-shape");
+        g.appendChild(shape);
+      });
+      if(!g.childNodes.length)return null;
+      const b=bounds(freePolygons.flat());
+      if(Number.isFinite(b.minX)&&Number.isFinite(b.minY)){
+        const label=document.createElementNS(ns,"text");
+        label.setAttribute("x",b.minX+b.width/2);label.setAttribute("y",b.minY+b.height/2);
+        label.setAttribute("text-anchor","middle");
+        label.classList.add("free-area-overlay-label");
+        label.textContent="СВОБОДНАЯ ОБЛАСТЬ";
+        g.appendChild(label);
+      }
+      return g;
+    }catch(err){
+      console.warn("SheetNest: free-area overlay skipped",err);
+      return null;
+    }
+  }
+
+  function compareRemnantToFree(svg,remnant,freePolygons){
+    try{
+      const freeArea=polygonAreaSum(freePolygons);
+      const bin=svg?.querySelector("#sheet-bin,.bin");
+      const binPoly=bin?polygonifyElement(bin):null;
+      const binArea=binPoly?area(binPoly):0;
+      const remArea=Array.isArray(remnant?.polygon)?area(remnant.polygon):binArea;
+      const consumed=Math.max(0,remArea-freeArea);
+      const remainingPct=remArea>0?(freeArea/remArea)*100:0;
+      const overlapArea=freeArea;
+      const overlapPct=remArea>0?Math.min(100,(overlapArea/remArea)*100):0;
+      return {
+        remnantArea:remArea,
+        freeArea,
+        consumedArea:consumed,
+        remainingPct,
+        overlapPct,
+        exactGeometry:Math.abs(remArea-freeArea)<0.01
+      };
+    }catch(err){
+      console.warn("SheetNest: remnant/free comparison skipped",err);
+      return null;
+    }
+  }
+
   function capture(results,meta){
     if(!enabled("saveRemnants",true))return[];
     try{
@@ -335,6 +422,10 @@
       .remnant-overlay-meta{font-family:Arial,sans-serif;font-size:12px;fill:#d1f5da;paint-order:stroke;stroke:#102116;stroke-width:4px;stroke-linejoin:round}
       .remnant-list{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}.remnant-chip{padding:6px 8px;border:1px solid #304237;border-radius:6px;background:rgba(255,255,255,.025);color:#aebbb2;font-size:10px}.remnant-chip b{color:#d7eadc}
     `;
+      .free-area-overlay{pointer-events:none}.free-area-overlay-shape{fill:rgba(255,184,62,.18);stroke:#ffb83e;stroke-width:1.8;vector-effect:non-scaling-stroke;stroke-dasharray:3 3}
+      .free-area-overlay-label{font-family:Arial,sans-serif;font-size:11px;font-weight:700;fill:#ffd27a;paint-order:stroke;stroke:#241b0a;stroke-width:4px;stroke-linejoin:round}
+      .free-area-legend{display:flex;align-items:center;gap:6px;color:#a89a7e}.free-area-legend i{display:block;width:12px;height:12px;border-radius:3px;background:rgba(255,184,62,.18);border:2px dashed #ffb83e}
+      .geometry-check{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}.geometry-check span{padding:4px 7px;border-radius:5px;border:1px solid #38423a;background:rgba(255,255,255,.025);font-size:10px;color:#9eaaa2}.geometry-check .warn{border-color:#76572a;color:#ffd27a}.geometry-check .ok{border-color:#315d40;color:#9fe1ae}
     document.head.appendChild(style);
   }
 
@@ -409,10 +500,17 @@
     ensureRemnantStyles();
     const tools=document.createElement("div");tools.className="remnant-layer-tools";
     const left=document.createElement("div");left.className="remnant-layer-left";
-    left.innerHTML="<strong>Слой деловых остатков</strong><span>Реальная геометрия · размеры · ориентация</span>";
-    const legend=document.createElement("div");legend.className="remnant-legend";legend.innerHTML="<i></i><span>Деловой остаток</span>";
-    const toggle=document.createElement("button");toggle.type="button";toggle.className="remnant-layer-toggle";toggle.textContent="Скрыть слой";
-    toggle.addEventListener("click",()=>{const hidden=wrap.classList.toggle("remnant-layer-hidden");wrap.querySelectorAll(".remnant-overlay").forEach(g=>g.style.display=hidden?"none":"");toggle.classList.toggle("off",hidden);toggle.textContent=hidden?"Показать слой":"Скрыть слой"});
+    left.innerHTML="<strong>Геометрические слои</strong><span>остаток · фактическая свободная область</span>";
+    const legend=document.createElement("div");legend.style.display="flex";legend.style.alignItems="center";legend.style.gap="12px";
+    const rleg=document.createElement("span");rleg.className="remnant-legend";rleg.innerHTML="<i></i><span>Деловой остаток</span>";
+    const fleg=document.createElement("span");fleg.className="free-area-legend";fleg.innerHTML="<i></i><span>Свободная область</span>";
+    legend.appendChild(rleg);legend.appendChild(fleg);
+    const toggle=document.createElement("button");toggle.type="button";toggle.className="remnant-layer-toggle";toggle.textContent="Скрыть слои";
+    toggle.addEventListener("click",()=>{
+      const hidden=wrap.classList.toggle("remnant-layers-hidden");
+      wrap.querySelectorAll(".remnant-overlay,.free-area-overlay").forEach(g=>g.style.display=hidden?"none":"");
+      toggle.classList.toggle("off",hidden);toggle.textContent=hidden?"Показать слои":"Скрыть слои";
+    });
     const right=document.createElement("div");right.style.display="flex";right.style.alignItems="center";right.style.gap="12px";right.appendChild(legend);right.appendChild(toggle);
     tools.appendChild(left);tools.appendChild(right);wrap.appendChild(tools);
     const list=document.createElement("div");list.className="remnant-list";
@@ -427,6 +525,7 @@
     });
     if(remnants.length)wrap.appendChild(list);
   }
+
 
   function renderMixed(remnantResults,newResults,meta,placed,total){
     state.remnantResultSvgs=Array.isArray(remnantResults)?remnantResults.flatMap(x=>Array.isArray(x?.results)?x.results:[]):[];
@@ -447,10 +546,31 @@
       const ori=rcheck&&rcheck.business?(rcheck.orientation===90?" · 90°":" · 0°"):"";
       head.innerHTML="<strong>"+title+"</strong><span>"+(remnant?"Деловой остаток · "+dim+ori:"Новый металлический лист")+"</span>";
       const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
-      if(remnant){const overlay=remnantOverlayGroup(clone,remnant,remnantIndex);if(overlay)clone.appendChild(overlay)}else decorateResultSvg(clone,meta,wrap.children.length);
+
+      const freePolys=actualFreePolygonsFromSvg(clone);
+      const comparison=remnant?compareRemnantToFree(clone,remnant,freePolys):null;
+
+      if(remnant){
+        const overlay=remnantOverlayGroup(clone,remnant,remnantIndex);if(overlay)clone.appendChild(overlay);
+      }else decorateResultSvg(clone,meta,wrap.children.length);
+
+      const freeOverlay=actualFreeOverlayGroup(clone,freePolys,remnantIndex);
+      if(freeOverlay)clone.appendChild(freeOverlay);
+
       card.appendChild(head);card.appendChild(clone);
+
       const summary=document.createElement("div");summary.className="sheet-summary";
-      summary.innerHTML="<span>"+(remnant?"Реальная геометрия остатка":"Новый лист")+" · зазор: <strong>"+meta.gap+" мм</strong></span>"+(remnant&&rcheck?'<span class="remnant-fit-badge">Минимум '+num("remnantMinLength",500)+" × "+num("remnantMinWidth",300)+" · "+(rcheck.business?"проходит":"не проходит")+"</span>":"");
+      if(remnant&&comparison){
+        const statusText=comparison.consumedArea>0.01?"частично использован":"совпадает с остатком";
+        const statusClass=comparison.consumedArea>0.01?"warn":"ok";
+        summary.innerHTML="<span>Фактическая свободная площадь: <strong>"+Math.round(comparison.freeArea)+" мм²</strong></span><span>Осталось от остатка: <strong>"+comparison.remainingPct.toFixed(1)+"%</strong></span><span>Использовано: <strong>"+Math.round(comparison.consumedArea)+" мм²</strong></span>";
+        const check=document.createElement("div");check.className="geometry-check";
+        check.innerHTML="<span class='"+statusClass+"'>Геометрическое сравнение: "+statusText+"</span><span>Пересечение со зелёным контуром: "+comparison.overlapPct.toFixed(1)+"%</span>";
+        summary.appendChild(check);
+      }else{
+        summary.innerHTML="<span>Фактическая свободная область: <strong>"+Math.round(polygonAreaSum(freePolys))+" мм²</strong></span><span>"+(remnant?"Деловой остаток":"Новый металлический лист")+" · зазор: <strong>"+meta.gap+" мм</strong></span>";
+      }
+      if(remnant&&rcheck)summary.innerHTML+="<span class='remnant-fit-badge'>Минимум "+num("remnantMinLength",500)+" × "+num("remnantMinWidth",300)+" · "+(rcheck.business?"проходит":"не проходит")+"</span>";
       card.appendChild(summary);wrap.appendChild(card);
     };
     let remIndex=0;
