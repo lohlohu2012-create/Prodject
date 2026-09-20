@@ -850,8 +850,6 @@ function betterNestingCandidate(next,best){
 }
 
 async function runSearch(){
-  try{
-
   if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
   if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
   const sheet=getSheet(),q=qualityConfig(),orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
@@ -926,6 +924,7 @@ async function runSearch(){
   }
 }
 
+}
 $("fileInput").addEventListener("change",async event=>{
   const files=Array.from(event.target.files||[]);if(!files.length)return;
   status("Загрузка CAD…");const imported=[],failed=[];
