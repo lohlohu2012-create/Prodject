@@ -280,15 +280,21 @@
   }
 
   function renderMixed(remnantResults,newResults,meta,placed,total){
+    state.remnantResultSvgs=remnantResults.flatMap(x=>x.results||[]);
     const wrap=$("canvasWrap");wrap.innerHTML="";
     const addCard=(svg,title,remnant)=>{
       const card=document.createElement("div");card.className="result-card"+(remnant?" remnant-result":"");
       const head=document.createElement("div");head.className="result-title";
-      head.innerHTML="<strong>"+title+"</strong><span>"+(remnant?"Деловой остаток":"Новый металлический лист")+"</span>";
+      const rb=remnant&&remnant.polygon?bounds(remnant.polygon):null;
+      const rcheck=remnant&&rb?classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),meta.gap):null;
+      const dim=rb?Math.round(rb.width)+" × "+Math.round(rb.height)+" мм":"";
+      const ori=rcheck&&rcheck.business?(rcheck.orientation===90?" · 90°":" · 0°"):"";
+      head.innerHTML="<strong>"+title+"</strong><span>"+(remnant?"Деловой остаток · "+dim+ori:"Новый металлический лист")+"</span>";
       const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
       if(!remnant)decorateResultSvg(clone,meta,wrap.children.length);
       card.appendChild(head);card.appendChild(clone);
-      const summary=document.createElement("div");summary.className="sheet-summary";summary.innerHTML="<span>"+(remnant?"Повторно использованный остаток":"Новый лист")+" · зазор: <strong>"+meta.gap+" мм</strong></span>";
+      const summary=document.createElement("div");summary.className="sheet-summary";
+      summary.innerHTML="<span>"+(remnant?"Реальная геометрия остатка":"Новый лист")+" · зазор: <strong>"+meta.gap+" мм</strong></span>"+(remnant&&rcheck?'<span class="remnant-fit-badge">Минимум '+num("remnantMinLength",500)+" × "+num("remnantMinWidth",300)+" · "+(rcheck.business?"проходит":"не проходит")+"</span>":"");
       card.appendChild(summary);wrap.appendChild(card);
     };
     remnantResults.forEach((x,i)=>x.results.forEach((svg,j)=>addCard(svg,"Остаток "+(i+1)+" · раскрой "+(j+1),true)));
@@ -374,6 +380,7 @@
       else{e.status="lost";e.stage="Смешанный раскрой";e.issue="Не размещена."}
     });
     renderMixed(usedResults,newResults,meta,placed,total);
+    window.SheetNestDxf?.update?.();
     renderDiagnosticsPanel(true);
     $("progressBar").style.width="100%";
     $("runInfo").textContent=remaining.size?"Частичный смешанный раскрой · не размещено: "+remaining.size:"Готово · деловые остатки: "+usedResults.length+" · новых листов: "+newResults.length+" · размещено: "+placed+"/"+total;
