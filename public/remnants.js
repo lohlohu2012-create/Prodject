@@ -656,6 +656,7 @@
       try{addCard(svg,"Новый лист "+(i+1),null,-1)}
       catch(err){console.warn("SheetNest: new-sheet visualization skipped",err)}
     });
+    state.remnantValidation=remnantChecks;
     if(remnantChecks.length){try{renderRemnantValidationPanel(wrap,remnantChecks)}catch(err){console.warn("SheetNest: remnant validation panel skipped",err)}}
     $("statSheets").textContent=safeRemnantResults.reduce((n,x)=>n+x.results.length,0)+safeNewResults.length;
     $("statParts").textContent=placed;$("statEfficiency").textContent=total?Math.round(placed/total*100)+"%":"0%";
