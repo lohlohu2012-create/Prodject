@@ -672,6 +672,35 @@ select:focus,input:focus{
   font-size:7px;
   font-weight:750;
 }
+.diagnostics-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.diagnostics-export{
+  height:29px;
+  min-width:38px;
+  padding:0 8px;
+  border:1px solid #d8dee4;
+  border-radius:8px;
+  background:#f8f9fa;
+  color:#5f6974;
+  font-size:8px;
+  font-weight:800;
+  letter-spacing:.35px;
+  cursor:pointer;
+}
+.diagnostics-export:hover:not(:disabled){
+  border-color:#c7cfd7;
+  background:#f1f4f6;
+  color:#39434d;
+}
+.diagnostics-export:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
 .diagnostics-toggle{
   height:29px;
   padding:0 9px;
