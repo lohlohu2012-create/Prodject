@@ -198,6 +198,7 @@ function appendLibraryParts(root,stage){
       const instanceId="library-"+shape.id+"#"+(copy+1);
       const ns="http://www.w3.org/2000/svg",group=document.createElementNS(ns,"g");
       group.setAttribute("data-sheetnest-stage-instance",instanceId);
+      group.setAttribute("data-sheetnest-shape",shape.id);
       group.setAttribute("transform","translate("+stage.nextX+" "+stage.nextY+")");
       const path=document.createElementNS(ns,"path");
       path.setAttribute("d",d);path.setAttribute("fill","none");path.setAttribute("stroke","black");path.setAttribute("stroke-width",".2");
