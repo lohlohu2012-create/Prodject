@@ -129,6 +129,12 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         assert eval_js("document.querySelectorAll('#shapeLibrary .shape-card').length") == 6
         assert eval_js("betterNestingCandidate({results:[1,2],placed:2,total:2,efficiency:0.2},{results:[1],placed:1,total:2,efficiency:0.9})") is True
         assert eval_js("betterNestingCandidate({results:[1],placed:1,total:2,efficiency:0.9},{results:[1,2],placed:2,total:2,efficiency:0.2})") is False
+        assert eval_js("typeof SvgNest.inspectSvg === 'function'") is True
+        assert eval_js("""(() => {
+          const svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 100"><path d="M0 0H80V80H0Z"/><path d="M140 0H220V80H140Z"/></svg>';
+          const info=SvgNest.inspectSvg(svg);
+          return info.parts===2 && info.contours===2;
+        })()""") is True
         assert eval_js("betterNestingCandidate({results:[1],placed:1,total:2,efficiency:0.9},{results:[1],placed:0,total:2,efficiency:0.2})") is True
         eval_js("""
           const cards=Array.from(document.querySelectorAll('#shapeLibrary .shape-card'));
@@ -142,7 +148,9 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         assert eval_js("typeof state !== 'undefined' && state.libraryParts.length") == 2
         assert eval_js("typeof state !== 'undefined' && state.libraryParts.find(item => item.id === 'rect').quantity") == 2
         assert eval_js("typeof state !== 'undefined' && state.libraryParts.find(item => item.id === 'circle').quantity") == 1
-        assert eval_js("(() => { const svg=buildNestingSvg(600,400,1); return (svg.match(/data-sheetnest-shape=/g)||[]).length; })()") == 3
+        assert eval_js("requestedPartCount()") == 3
+        assert eval_js("(() => { const svg=buildNestingSvg(600,400); return (svg.match(/data-sheetnest-stage-instance=/g)||[]).length; })()") == 3
+        assert eval_js("(() => { const svg=buildNestingSvg(600,400); return (svg.match(/data-sheetnest-source-instance-id=/g)||[]).length >= 3; })()") is True
         assert eval_js("(() => { const parsed=SvgNest.parsesvg(buildNestingSvg(600,400,1)); return Boolean(parsed && parsed.querySelector('#sheet-bin')); })()") is True
         eval_js("document.getElementById('clearShapes').click()")
         assert eval_js("document.title") == "SheetNest — Metal Nesting"
@@ -206,6 +214,9 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
             raise RuntimeError(f"Unexpected nesting stats: sheets={sheets}, parts={parts}")
         if int(parts) != 3:
             raise RuntimeError(f"Mixed parts were not all placed: parts={parts}")
+        unit_ids = eval_js("Array.from(document.querySelectorAll('#canvasWrap g[data-sheetnest-unit-id]')).map(node => node.getAttribute('data-sheetnest-unit-id'))")
+        if len(unit_ids) != len(set(unit_ids)) or len(unit_ids) != 3:
+            raise RuntimeError(f"Placed unit ids are not one-to-one: {unit_ids!r}")
         if int(frames) < 1:
             raise RuntimeError(f"Live nesting preview did not receive candidate frames: frames={frames}")
 
