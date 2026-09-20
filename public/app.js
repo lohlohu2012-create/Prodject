@@ -918,6 +918,12 @@ async function runSearch(){
     $("runInfo").textContent="Допустимую раскладку не удалось найти.";
     status("Нет результата");
   }
+  }finally{
+    state.running=false;
+    try{SvgNest.stop()}catch(_){}
+    $("nestButton").disabled=false;
+    $("stopButton").disabled=true;
+  }
 }
 
 $("fileInput").addEventListener("change",async event=>{
