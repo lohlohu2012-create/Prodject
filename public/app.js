@@ -802,6 +802,8 @@ function startOneRun(sheet,runDurationMs,runId){
       if(!state.running){settle("stopped");return;}
       updateProgress();
     };
+    timer=setTimeout(()=>settle("timeout"),Math.max(1000,Number(runDurationMs)||1000));
+    interval=setInterval(updateTimer,120);
     try{
       SvgNest.start(
         progress=>{if(state.running&&runId===state.runId)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`;},
@@ -828,8 +830,6 @@ function startOneRun(sheet,runDurationMs,runId){
       settle("error");
       throw err;
     }
-    interval=setInterval(updateTimer,120);
-    timer=setTimeout(()=>settle("timeout"),Math.max(1000,Number(runDurationMs)||1000));
   });
 }
 function betterNestingCandidate(next,best){
