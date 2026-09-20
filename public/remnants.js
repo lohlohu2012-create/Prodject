@@ -429,7 +429,12 @@
       .free-area-overlay-label{font-family:Arial,sans-serif;font-size:11px;font-weight:700;fill:#ffd27a;paint-order:stroke;stroke:#241b0a;stroke-width:4px;stroke-linejoin:round}
       .free-area-legend{display:flex;align-items:center;gap:6px;color:#a89a7e}.free-area-legend i{display:block;width:12px;height:12px;border-radius:3px;background:rgba(255,184,62,.18);border:2px dashed #ffb83e}
       .geometry-check{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}.geometry-check span{padding:4px 7px;border-radius:5px;border:1px solid #38423a;background:rgba(255,255,255,.025);font-size:10px;color:#9eaaa2}.geometry-check .warn{border-color:#76572a;color:#ffd27a}.geometry-check .ok{border-color:#315d40;color:#9fe1ae}
-    document.head.appendChild(style);
+      .remnant-validation{display:flex;align-items:center;gap:8px;margin-top:8px;padding:7px 9px;border-radius:6px;border:1px solid #39443d;background:rgba(255,255,255,.025);font-size:10px}
+      .remnant-validation.ok{border-color:#315d40;color:#9fe1ae}.remnant-validation.warn{border-color:#76572a;color:#ffd27a}.remnant-validation.fail{border-color:#713d3d;color:#ff9f9f}
+      .remnant-validation-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto}
+      .remnant-validation-list{display:grid;gap:6px;margin:0 0 12px}.remnant-validation-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid #2f3933;border-radius:6px;background:rgba(255,255,255,.02);font-size:10px}
+      .remnant-validation-item.ok{color:#9fe1ae;border-color:#315d40}.remnant-validation-item.warn{color:#ffd27a;border-color:#76572a}.remnant-validation-item.fail{color:#ff9f9f;border-color:#713d3d}
+      .remnant-validation-item b{color:#d9e8dd}.remnant-validation-note{color:#849188}
   }
 
   function remnantOverlayGroup(svg,remnant,index){
@@ -499,6 +504,68 @@
     }
   }
 
+  function validateRemnantOverlay(svg,remnant){
+    try{
+      if(!svg||!remnant||!Array.isArray(remnant.polygon)||remnant.polygon.length<3){
+        return {status:"fail",ok:false,message:"Нет геометрии делового остатка."};
+      }
+      const bin=svg.querySelector("#sheet-bin,.bin");
+      const binPoly=bin?polygonifyElement(bin):null;
+      if(!binPoly||binPoly.length<3){
+        return {status:"fail",ok:false,message:"Не найден контур листа/остатка #sheet-bin."};
+      }
+      const overlay=svg.querySelector(".remnant-overlay .remnant-overlay-shape");
+      if(!overlay){
+        return {status:"fail",ok:false,message:"Зелёный контур не создан."};
+      }
+      const points=(overlay.getAttribute("points")||"").trim().split(/\\s+/).map(v=>v.split(",").map(Number)).filter(v=>v.length===2&&v.every(Number.isFinite)).map(v=>({x:v[0],y:v[1]}));
+      if(points.length<3){
+        return {status:"fail",ok:false,message:"Зелёный контур создан, но содержит недостаточно точек."};
+      }
+      const greenArea=area(points),binArea=area(binPoly),expectedArea=area(remnant.polygon);
+      const areaDiff=binArea>0?Math.abs(greenArea-binArea)/binArea*100:100;
+      const sourceDiff=expectedArea>0?Math.abs(greenArea-expectedArea)/expectedArea*100:100;
+      const b=bounds(points),bb=bounds(binPoly);
+      const bboxDiff=Math.max(bb.width,bb.height)>0?(Math.abs(b.width-bb.width)/Math.max(bb.width,bb.height)+Math.abs(b.height-bb.height)/Math.max(bb.width,bb.height))*50:100;
+      const tolerance=1;
+      const ok=areaDiff<=tolerance&&sourceDiff<=tolerance&&bboxDiff<=tolerance;
+      return {status:ok?"ok":"warn",ok,message:ok?"Зелёный контур совпадает с геометрией остатка.":"Зелёный контур создан, но его геометрия отличается от исходного остатка.",areaDiff,sourceDiff,bboxDiff,points:points.length};
+    }catch(err){
+      console.warn("SheetNest: remnant overlay validation failed",err);
+      return {status:"fail",ok:false,message:"Ошибка проверки зелёного контура: "+(err?.message||String(err))};
+    }
+  }
+
+  function validateAllRemnantSheets(remnantResults){
+    const checks=[];
+    (Array.isArray(remnantResults)?remnantResults:[]).forEach((item,ri)=>{
+      const remnant=item?.remnant;
+      (Array.isArray(item?.results)?item.results:[]).forEach((svg,si)=>{
+        const displayId=remnant?.displayId||("REM-"+String(ri+1).padStart(3,"0"));
+        const check=validateRemnantOverlay(svg,remnant);
+        checks.push({sheetIndex:si+1,remnantIndex:ri+1,displayId,check});
+      });
+    });
+    return checks;
+  }
+
+  function renderRemnantValidationPanel(wrap,checks){
+    if(!wrap)return;
+    const list=document.createElement("div");list.className="remnant-validation-list";
+    const total=checks.length,ok=checks.filter(x=>x.check?.status==="ok").length,failed=checks.filter(x=>x.check?.status==="fail").length;
+    const title=document.createElement("div");title.className="remnant-validation "+(failed?"fail":ok===total?"ok":"warn");
+    title.innerHTML="<span class=\"remnant-validation-dot\"></span><strong>Проверка зелёных контуров:</strong> "+ok+"/"+total+" совпадают"+(failed?" · ошибок: "+failed:"");
+    list.appendChild(title);
+    checks.forEach(x=>{
+      const cls=x.check?.status||"fail";
+      const item=document.createElement("div");item.className="remnant-validation-item "+cls;
+      const details=x.check?.status==="ok"?"OK":(x.check?.message||"Проверка не пройдена");
+      item.innerHTML="<span class=\"remnant-validation-dot\"></span><b>Лист "+x.sheetIndex+"</b> · "+x.displayId+" <span class=\"remnant-validation-note\">"+details+"</span>";
+      list.appendChild(item);
+    });
+    wrap.insertBefore(list,wrap.firstChild?.nextSibling||null);
+  }
+
   function addRemnantLayerControls(wrap,remnants){
     ensureRemnantStyles();
     const tools=document.createElement("div");tools.className="remnant-layer-tools";
@@ -537,6 +604,7 @@
     const safeNewResults=Array.isArray(newResults)?newResults.filter(Boolean):[];
     const visibleRemnants=safeRemnantResults.map((x,i)=>{const r={...(x.remnant||{})};r.displayId="REM-"+String(i+1).padStart(3,"0");return r});
     if(visibleRemnants.length){try{addRemnantLayerControls(wrap,visibleRemnants)}catch(err){console.warn("SheetNest: remnant controls skipped",err)}}
+    const remnantChecks=validateAllRemnantSheets(safeRemnantResults.map((x,i)=>({remnant:{...(x.remnant||{}),displayId:visibleRemnants[i]?.displayId||("REM-"+String(i+1).padStart(3,"0"))},results:x.results})));
     const addCard=(svg,title,remnant,remnantIndex)=>{
       const card=document.createElement("div");card.className="result-card"+(remnant?" remnant-result":"");
       const head=document.createElement("div");head.className="result-title";
@@ -585,6 +653,7 @@
       try{addCard(svg,"Новый лист "+(i+1),null,-1)}
       catch(err){console.warn("SheetNest: new-sheet visualization skipped",err)}
     });
+    if(remnantChecks.length){try{renderRemnantValidationPanel(wrap,remnantChecks)}catch(err){console.warn("SheetNest: remnant validation panel skipped",err)}}
     $("statSheets").textContent=safeRemnantResults.reduce((n,x)=>n+x.results.length,0)+safeNewResults.length;
     $("statParts").textContent=placed;$("statEfficiency").textContent=total?Math.round(placed/total*100)+"%":"0%";
     try{applyCanvasZoom()}catch(err){console.warn("SheetNest: canvas zoom update skipped",err)}
