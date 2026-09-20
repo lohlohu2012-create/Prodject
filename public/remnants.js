@@ -247,7 +247,16 @@
     if(!bin)return null;
     const unitMap=mapParsedUnits(parsed),expected={};
     instances.forEach(x=>expected[x.instanceId]=Number(x.part.nestingUnits||1));
-    Object.entries(unitMap).forEach(([u,i])=>{if(!expected[i])expected[i]=1});
+    Object.entries(unitMap).forEach(([u,i])=>{
+      if(!expected[i])expected[i]=1;
+      state.unitToInstance[u]=i;
+      const entry=state.instanceDiagnostics&&state.instanceDiagnostics[i];
+      if(entry&&entry.unitIds.indexOf(u)<0)entry.unitIds.push(u);
+    });
+    instances.forEach(x=>{
+      const entry=state.instanceDiagnostics&&state.instanceDiagnostics[x.instanceId];
+      if(entry){entry.staged=true;entry.stage=label==="remnant"?"Деловой остаток":"Новый лист";entry.status="candidate";entry.issue="Передана в "+(label==="remnant"?"остаток":"новый лист")+"."}
+    });
     SvgNest.setbin(bin);
     let best=null;
     return await new Promise(resolve=>{
