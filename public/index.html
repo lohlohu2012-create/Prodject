@@ -191,6 +191,21 @@
         <div class="progress-wrap"><span class="progress-label">SEARCH</span><div class="progress"><div id="progressBar"></div></div></div>
       </div>
 
+      <section id="diagnosticsPanel" class="diagnostics-panel" hidden>
+        <div class="diagnostics-head">
+          <div class="diagnostics-title-wrap">
+            <div class="diagnostics-kicker">INSTANCE TRACE</div>
+            <div class="diagnostics-title-line"><h2>Диагностика раскроя</h2><span id="diagnosticsStatus">Живая трассировка</span></div>
+          </div>
+          <button id="diagnosticsToggle" class="diagnostics-toggle" type="button">Свернуть</button>
+        </div>
+        <div id="diagnosticsBody" class="diagnostics-body">
+          <div id="diagnosticsSummary" class="diagnostics-summary"></div>
+          <div class="diagnostics-columns"><span>STATUS</span><span>INSTANCE / DETAIL</span><span>STAGE / PROBLEM</span></div>
+          <div id="diagnosticsList" class="diagnostics-list"></div>
+        </div>
+      </section>
+
       <section id="canvasWrap" class="canvas-wrap">
         <div class="canvas-empty">
           <div class="empty-grid">
