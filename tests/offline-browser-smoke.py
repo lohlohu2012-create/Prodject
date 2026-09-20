@@ -176,9 +176,9 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
           document.getElementById("sheetH").value="300";
           document.getElementById('margin').value='0';
           document.getElementById('gap').value='1';
-          const rect=Array.from(document.querySelectorAll("#shapeLibrary .shape-card")).find(card=>card.textContent.includes("Прямоугольник"));
-          rect.querySelector(".shape-card-qty").value="2";
-          rect.querySelector(".shape-add").click();
+          const rectCard=Array.from(document.querySelectorAll("#shapeLibrary .shape-card")).find(card=>card.textContent.includes("Прямоугольник"));
+          rectCard.querySelector(".shape-card-qty").value="2";
+          rectCard.querySelector(".shape-add").click();
           document.getElementById('rotations').value='1';
           qualityConfig = () => ({seconds: 5, populationSize: 4, mutationRate: 1});
         """)
