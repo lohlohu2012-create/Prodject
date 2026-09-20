@@ -261,14 +261,54 @@ function dxfPair(entity,code,fallback=null){
 function dxfPairs(entity,code){
   return entity.pairs.filter(item=>item.type===code).map(item=>item.value);
 }
-function dxfPolylinePoints(entity){
-  const points=[];
-  let x=null,y=null;
+function dxfPolylineVertices(entity){
+  const vertices=[];
+  let current=null;
   for(const pair of entity.pairs){
-    if(pair.type===10)x=dxfNum(pair.value);
-    if(pair.type===20)y=dxfNum(pair.value);
-    if(pair.type===10&&x!==null&&y!==null){points.push(dxfPoint(x,y));x=null;y=null}
+    if(pair.type===10){
+      if(current&&current.x!==null&&current.y!==null)vertices.push(current);
+      current={x:dxfNum(pair.value),y:null,bulge:0};
+    }else if(pair.type===20&&current){
+      current.y=dxfNum(pair.value);
+    }else if(pair.type===42&&current){
+      current.bulge=dxfNum(pair.value);
+    }
   }
+  if(current&&current.x!==null&&current.y!==null)vertices.push(current);
+  return vertices;
+}
+function dxfBulgePoints(start,end,bulge){
+  const b=dxfNum(bulge);
+  if(Math.abs(b)<1e-9)return [start,end];
+  const dx=end.x-start.x,dy=end.y-start.y,chord=Math.hypot(dx,dy);
+  if(chord<1e-9)return [start];
+  const theta=4*Math.atan(b);
+  const radius=chord*(1+b*b)/(4*Math.abs(b));
+  const mx=(start.x+end.x)/2,my=(start.y+end.y)/2;
+  const leftX=-dy/chord,leftY=dx/chord;
+  const centerOffset=chord*(1-b*b)/(4*b);
+  const cx=mx+leftX*centerOffset,cy=my+leftY*centerOffset;
+  const startAngle=Math.atan2(start.y-cy,start.x-cx);
+  const steps=Math.max(2,Math.ceil(Math.abs(theta)*180/Math.PI/5));
+  const points=[];
+  for(let i=0;i<=steps;i++){
+    const angle=startAngle+theta*i/steps;
+    points.push({x:cx+radius*Math.cos(angle),y:cy+radius*Math.sin(angle)});
+  }
+  points[0]=start;points[points.length-1]=end;
+  return points;
+}
+function dxfExpandPolyline(vertices,closed){
+  if(vertices.length<2)return[];
+  const points=[];
+  const edgeCount=closed?vertices.length:vertices.length-1;
+  for(let i=0;i<edgeCount;i++){
+    const a=vertices[i],b=vertices[(i+1)%vertices.length];
+    const arc=dxfBulgePoints({x:a.x,y:a.y},{x:b.x,y:b.y},a.bulge);
+    if(!points.length)points.push(...arc);
+    else points.push(...arc.slice(1));
+  }
+  if(closed&&points.length>1&&dxfSame(points[0],points[points.length-1]))points.pop();
   return points;
 }
 function dxfParse(){
@@ -280,10 +320,9 @@ function dxfTextToSvg(text){
   for(let i=0;i<entities.length;i++){
     const e=entities[i],type=String(e.type||"").toUpperCase();
     if(type==="LWPOLYLINE"){
-      const xs=dxfPairs(e,10).map(Number),ys=dxfPairs(e,20).map(Number),pts=[];
-      for(let k=0;k<Math.min(xs.length,ys.length);k++)pts.push(dxfPoint(xs[k],ys[k]));
+      const flags=dxfNum(dxfPair(e,70,0));
+      const pts=dxfExpandPolyline(dxfPolylineVertices(e),(flags&1)!==0);
       if(pts.length>=2){
-        const flags=dxfNum(dxfPair(e,70,0));
         (flags&1?closed:open).push(pts);
       }
       continue;
@@ -293,8 +332,11 @@ function dxfTextToSvg(text){
       for(;j<entities.length;j++){
         const child=entities[j],ct=String(child.type||"").toUpperCase();
         if(ct==="VERTEX"){
-          const x=dxfPair(child,10),y=dxfPair(child,20);
-          if(x!==null&&y!==null)pts.push(dxfPoint(x,y));
+          pts.push({
+            x:dxfNum(dxfPair(child,10)),
+            y:dxfNum(dxfPair(child,20)),
+            bulge:dxfNum(dxfPair(child,42,0))
+          });
           continue;
         }
         if(ct==="SEQEND")break;
@@ -303,7 +345,8 @@ function dxfTextToSvg(text){
       i=j;
       if(pts.length>=2){
         const flags=dxfNum(dxfPair(e,70,0));
-        (flags&1?closed:open).push(pts);
+        const expanded=dxfExpandPolyline(pts,(flags&1)!==0);
+        (flags&1?closed:open).push(expanded);
       }
       continue;
     }
@@ -324,7 +367,8 @@ function dxfTextToSvg(text){
       const a0=dxfNum(dxfPair(e,50)),a1=dxfNum(dxfPair(e,51));let delta=(a1-a0)%360;if(delta<0)delta+=360;
       const steps=Math.max(8,Math.ceil(delta/5)),pts=[];
       for(let k=0;k<=steps;k++){const a=(a0+delta*k/steps)*Math.PI/180;pts.push(dxfPoint(cx+r*Math.cos(a),cy+r*Math.sin(a)))}
-      open.push(pts);
+      for(let k=0;k<pts.length-1;k++)segments.push({a:pts[k],b:pts[k+1]});
+      continue;
     }
   }
 
