@@ -435,6 +435,8 @@
       .remnant-validation-list{display:grid;gap:6px;margin:0 0 12px}.remnant-validation-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid #2f3933;border-radius:6px;background:rgba(255,255,255,.02);font-size:10px}
       .remnant-validation-item.ok{color:#9fe1ae;border-color:#315d40}.remnant-validation-item.warn{color:#ffd27a;border-color:#76572a}.remnant-validation-item.fail{color:#ff9f9f;border-color:#713d3d}
       .remnant-validation-item b{color:#d9e8dd}.remnant-validation-note{color:#849188}
+    `;
+    document.head.appendChild(style);
   }
 
   function remnantOverlayGroup(svg,remnant,index){
@@ -518,7 +520,7 @@
       if(!overlay){
         return {status:"fail",ok:false,message:"Зелёный контур не создан."};
       }
-      const points=(overlay.getAttribute("points")||"").trim().split(/\\s+/).map(v=>v.split(",").map(Number)).filter(v=>v.length===2&&v.every(Number.isFinite)).map(v=>({x:v[0],y:v[1]}));
+      const points=(overlay.getAttribute("points")||"").trim().split(/\s+/).map(v=>v.split(",").map(Number)).filter(v=>v.length===2&&v.every(Number.isFinite)).map(v=>({x:v[0],y:v[1]}));
       if(points.length<3){
         return {status:"fail",ok:false,message:"Зелёный контур создан, но содержит недостаточно точек."};
       }
@@ -604,7 +606,7 @@
     const safeNewResults=Array.isArray(newResults)?newResults.filter(Boolean):[];
     const visibleRemnants=safeRemnantResults.map((x,i)=>{const r={...(x.remnant||{})};r.displayId="REM-"+String(i+1).padStart(3,"0");return r});
     if(visibleRemnants.length){try{addRemnantLayerControls(wrap,visibleRemnants)}catch(err){console.warn("SheetNest: remnant controls skipped",err)}}
-    const remnantChecks=validateAllRemnantSheets(safeRemnantResults.map((x,i)=>({remnant:{...(x.remnant||{}),displayId:visibleRemnants[i]?.displayId||("REM-"+String(i+1).padStart(3,"0"))},results:x.results})));
+    const remnantChecks=[];
     const addCard=(svg,title,remnant,remnantIndex)=>{
       const card=document.createElement("div");card.className="result-card"+(remnant?" remnant-result":"");
       const head=document.createElement("div");head.className="result-title";
@@ -623,6 +625,7 @@
 
       if(remnant){
         const overlay=remnantOverlayGroup(clone,remnant,remnantIndex);if(overlay)clone.appendChild(overlay);
+        remnantChecks.push({sheetIndex:remnantIndex+1,remnantIndex:remnantIndex+1,displayId:remnant.displayId||("REM-"+String(remnantIndex+1).padStart(3,"0")),check:validateRemnantOverlay(clone,remnant)});
       }else decorateResultSvg(clone,meta,wrap.children.length);
 
       const freeOverlay=actualFreeOverlayGroup(clone,freePolys,remnantIndex);
