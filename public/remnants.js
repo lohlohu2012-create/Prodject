@@ -381,7 +381,15 @@
     const right=document.createElement("div");right.style.display="flex";right.style.alignItems="center";right.style.gap="12px";right.appendChild(legend);right.appendChild(toggle);
     tools.appendChild(left);tools.appendChild(right);wrap.appendChild(tools);
     const list=document.createElement("div");list.className="remnant-list";
-    remnants.forEach((rem,i)=>{const b=bounds(rem.polygon||[]),chip=document.createElement("div");chip.className="remnant-chip";chip.innerHTML="<b>"+(rem.displayId||("REM-"+String(i+1).padStart(3,"0")))+"</b> · "+Math.round(b.width)+" × "+Math.round(b.height)+" мм";list.appendChild(chip)});
+    remnants.forEach((rem,i)=>{
+      try{
+        const b=bounds(Array.isArray(rem.polygon)?rem.polygon:[]);
+        if(!Number.isFinite(b.width)||!Number.isFinite(b.height))return;
+        const chip=document.createElement("div");chip.className="remnant-chip";
+        chip.innerHTML="<b>"+(rem.displayId||("REM-"+String(i+1).padStart(3,"0")))+"</b> · "+Math.round(b.width)+" × "+Math.round(b.height)+" мм";
+        list.appendChild(chip);
+      }catch(_){}
+    });
     if(remnants.length)wrap.appendChild(list);
   }
 
@@ -393,8 +401,11 @@
     const addCard=(svg,title,remnant,remnantIndex)=>{
       const card=document.createElement("div");card.className="result-card"+(remnant?" remnant-result":"");
       const head=document.createElement("div");head.className="result-title";
-      const rb=remnant&&remnant.polygon?bounds(remnant.polygon):null;
-      const rcheck=remnant&&rb?classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),meta.gap):null;
+      let rb=null,rcheck=null;
+      try{
+        rb=remnant&&Array.isArray(remnant.polygon)&&remnant.polygon.length>=3?bounds(remnant.polygon):null;
+        rcheck=remnant&&rb?classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),meta.gap):null;
+      }catch(_){rb=null;rcheck=null}
       const dim=rb?Math.round(rb.width)+" × "+Math.round(rb.height)+" мм":"";
       const ori=rcheck&&rcheck.business?(rcheck.orientation===90?" · 90°":" · 0°"):"";
       head.innerHTML="<strong>"+title+"</strong><span>"+(remnant?"Деловой остаток · "+dim+ori:"Новый металлический лист")+"</span>";
