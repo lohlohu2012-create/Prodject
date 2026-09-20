@@ -728,8 +728,23 @@
     const testedRemnantIds=new Set();
     const usedResults=[];
     const minL=num("remnantMinLength",500),minW=num("remnantMinWidth",300),gap=num("gap",2);
+    const currentSheet=getSheet();
+    const currentSheetArea=Math.max(1,Number(currentSheet.w||0)*Number(currentSheet.h||0));
     let remnants=load().filter(compatible);
-    remnants=remnants.filter(r=>classify(r.polygon,minL,minW,gap).business);
+    remnants=remnants.filter(r=>{
+      try{
+        if(!Array.isArray(r?.polygon)||r.polygon.length<3)return false;
+        const ra=area(r.polygon),rb=bounds(r.polygon);
+        // Старые ошибочные записи, представляющие практически весь лист,
+        // не должны снова попадать в расчёт.
+        if(ra/currentSheetArea>=0.995)return false;
+        if(rb.width>=Number(currentSheet.w||0)*0.995 && rb.height>=Number(currentSheet.h||0)*0.995 && ra/currentSheetArea>=0.90)return false;
+        return classify(r.polygon,minL,minW,gap).business;
+      }catch(err){
+        console.warn("SheetNest: invalid saved remnant skipped",err);
+        return false;
+      }
+    });
     remnants.sort((a,b)=>b.area-a.area);
     const q=qualityConfig();
     const maxRemnants=q.seconds<=10?6:q.seconds<=30?10:18;
