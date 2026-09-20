@@ -264,11 +264,12 @@
       onUpdate({progress:Math.max(0,Math.min(1,Number(progress)||0)),svglist:svglist||null,efficiency:Number(efficiency||0),placed:Number(placed||0),isBest:Boolean(isBest),frame:lastFrame,label});
     };
     return await new Promise(resolve=>{
-      let timer=null;
+      let timer=null,watch=null;
       const finish=()=>{
         if(stopped)return;
         stopped=true;
         if(timer)clearTimeout(timer);
+        if(watch)clearInterval(watch);
         try{SvgNest.stop()}catch(_){}
         emit(1,best?.results,best?.efficiency,best?.placed,true);
         resolve(best);
@@ -285,6 +286,9 @@
         }
       );
       timer=setTimeout(finish,seconds*1000);
+      watch=setInterval(()=>{
+        if(!state.running)finish();
+      },100);
     });
   }
 
@@ -416,6 +420,7 @@
     $("progressBar").style.width="0%";
     $("runInfo").textContent=phases+" этапов · расчёт времени…";
     let phaseIndex=0;
+    let lastVisualUpdate=0;
     const updateMixed=(info)=>{
       if(!state.running)return;
       const phaseProgress=Math.max(0,Math.min(1,Number(info?.progress)||0));
@@ -427,7 +432,8 @@
       const tag=info?.label==="remnant"?"остаток":"лист";
       $("runInfo").textContent="Поиск · "+tag+" "+(phaseIndex+1)+"/"+Math.max(1,phases)+" · кадр "+frame+" · "+Math.ceil(eta)+" с";
       status("Ищем раскладку…");
-      if(info?.svglist?.length){
+      if(info?.svglist?.length && (info.frame || Date.now()-lastVisualUpdate>=220)){
+        lastVisualUpdate=Date.now();
         state.searchFrames++;
         renderLiveCandidate(info.svglist,info.efficiency,info.placed,originalInstances.length,info.label,info.isBest);
       }
