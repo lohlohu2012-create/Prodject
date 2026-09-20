@@ -24,12 +24,17 @@
   function toClip(poly){return poly.map(p=>({X:Math.round(p.x*SCALE),Y:Math.round(p.y*SCALE)}))}
   function fromClip(poly){return poly.map(p=>({x:p.X/SCALE,y:p.Y/SCALE}))}
   function clipDifference(subject,clip){
-    if(!subject.length)return[];
-    const c=new ClipperLib.Clipper(),solution=[];
-    c.AddPaths(subject.map(toClip),ClipperLib.PolyType.ptSubject,true);
-    if(clip&&clip.length)c.AddPaths(clip.map(toClip),ClipperLib.PolyType.ptClip,true);
-    c.Execute(ClipperLib.ClipType.ctDifference,solution,ClipperLib.PolyFillType.pftNonZero,ClipperLib.PolyFillType.pftNonZero);
-    return solution.map(fromClip).filter(p=>p.length>=3&&area(p)>EPS);
+    try{
+      if(!Array.isArray(subject)||!subject.length||!window.ClipperLib)return[];
+      const c=new ClipperLib.Clipper(),solution=[];
+      c.AddPaths(subject.map(toClip),ClipperLib.PolyType.ptSubject,true);
+      if(Array.isArray(clip)&&clip.length)c.AddPaths(clip.map(toClip),ClipperLib.PolyType.ptClip,true);
+      c.Execute(ClipperLib.ClipType.ctDifference,solution,ClipperLib.PolyFillType.pftNonZero,ClipperLib.PolyFillType.pftNonZero);
+      return solution.map(fromClip).filter(p=>p.length>=3&&area(p)>EPS);
+    }catch(err){
+      console.warn("SheetNest: remnant geometry difference skipped",err);
+      return[];
+    }
   }
   function normalize(poly){
     const b=bounds(poly);return {polygon:poly.map(p=>({x:p.x-b.minX,y:p.y-b.minY})),bounds:b}
@@ -116,47 +121,58 @@
   }
 
   function freePolygonsFromSvg(svg){
-    const doc=svg.cloneNode(true);
-    const root=doc;
-    const bin=root.querySelector("#sheet-bin,.bin");
-    const sheetPoly=bin?polygonifyElement(bin):null;
-    if(!sheetPoly)return[];
-    let free=[sheetPoly];
-    const occupied=[];
-    root.querySelectorAll("[data-sheetnest-unit-id]").forEach(el=>{
-      if(el===bin)return;
-      const p=polygonifyElement(el);
-      if(p)occupied.push(p);
-    });
-    for(const p of occupied){
-      free=free.flatMap(f=>clipDifference([f],[p]));
-      if(!free.length)break;
+    try{
+      if(!svg||typeof svg.cloneNode!=="function")return[];
+      const root=svg.cloneNode(true);
+      const bin=root.querySelector("#sheet-bin,.bin");
+      const sheetPoly=bin?polygonifyElement(bin):null;
+      if(!sheetPoly)return[];
+      let free=[sheetPoly];
+      const occupied=[];
+      root.querySelectorAll("[data-sheetnest-unit-id]").forEach(el=>{
+        if(el===bin)return;
+        const p=polygonifyElement(el);
+        if(p)occupied.push(p);
+      });
+      for(const p of occupied){
+        free=free.flatMap(f=>clipDifference([f],[p]));
+        if(!free.length)break;
+      }
+      return free.map(normalize).map(x=>x.polygon).filter(p=>Array.isArray(p)&&p.length>=3&&area(p)>1);
+    }catch(err){
+      console.warn("SheetNest: cannot extract business remnant geometry",err);
+      return[];
     }
-    return free.map(normalize).map(x=>x.polygon).filter(p=>area(p)>1);
   }
 
   function capture(results,meta){
     if(!enabled("saveRemnants",true))return[];
-    const minStore=Math.max(10,Math.min(num("remnantMinLength",500),num("remnantMinWidth",300))*0.25);
-    const items=load();
-    const created=[];
-    (results||[]).forEach((svg,si)=>{
-      for(const poly0 of freePolygonsFromSvg(svg)){
-        const b=bounds(poly0);
-        if(b.width<minStore||b.height<minStore)continue;
-        const item={
-          id:"REM-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),
-          material:meta.material,thickness:Number(meta.thickness||0),
-          sourceSheetId:"SHEET-"+(si+1),sourceJobId:String(state.runId||Date.now()),
-          polygon:poly0,area:area(poly0),bbox:{width:b.width,height:b.height},
-          createdAt:new Date().toISOString(),status:"available"
-        };
-        items.push(item);created.push(item);
-      }
-    });
-    const dedup=items.filter((item,i,a)=>a.findIndex(x=>x.id===item.id)===i).slice(-200);
-    save(dedup);
-    return created;
+    try{
+      const minStore=Math.max(10,Math.min(num("remnantMinLength",500),num("remnantMinWidth",300))*0.25);
+      const items=load(),created=[];
+      (Array.isArray(results)?results:[]).forEach((svg,si)=>{
+        try{
+          for(const poly0 of freePolygonsFromSvg(svg)){
+            const b=bounds(poly0);
+            if(!Number.isFinite(b.width)||!Number.isFinite(b.height)||b.width<minStore||b.height<minStore)continue;
+            const item={
+              id:"REM-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),
+              material:meta?.material||"",thickness:Number(meta?.thickness||0),
+              sourceSheetId:"SHEET-"+(si+1),sourceJobId:String(state.runId||Date.now()),
+              polygon:poly0,area:area(poly0),bbox:{width:b.width,height:b.height},
+              createdAt:new Date().toISOString(),status:"available"
+            };
+            items.push(item);created.push(item);
+          }
+        }catch(err){console.warn("SheetNest: skipped invalid remnant source sheet",si,err)}
+      });
+      const dedup=items.filter((item,i,a)=>a.findIndex(x=>x.id===item.id)===i).slice(-200);
+      try{save(dedup)}catch(err){console.warn("SheetNest: remnant storage update skipped",err)}
+      return created;
+    }catch(err){
+      console.warn("SheetNest: remnant capture skipped",err);
+      return[];
+    }
   }
 
   function compatible(rem){
