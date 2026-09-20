@@ -236,7 +236,7 @@
     return a.efficiency>b.efficiency;
   }
 
-  async function runBin(poly,instances,label){
+  async function runBin(poly,instances,label,onUpdate){
     if(!instances.length)return null;
     const q=qualityConfig();
     const seconds=Math.max(3,Math.min(12,q.seconds/3));
@@ -258,16 +258,32 @@
       if(entry){entry.staged=true;entry.stage=label==="remnant"?"Деловой остаток":"Новый лист";entry.status="candidate";entry.issue="Передана в "+(label==="remnant"?"остаток":"новый лист")+"."}
     });
     SvgNest.setbin(bin);
-    let best=null;
+    let best=null,lastFrame=0,started=Date.now(),stopped=false;
+    const emit=(progress,svglist,efficiency,placed,isBest)=>{
+      if(typeof onUpdate!=="function")return;
+      onUpdate({progress:Math.max(0,Math.min(1,Number(progress)||0)),svglist:svglist||null,efficiency:Number(efficiency||0),placed:Number(placed||0),isBest:Boolean(isBest),frame:lastFrame,label});
+    };
     return await new Promise(resolve=>{
       let timer=null;
-      const finish=()=>{if(timer)clearInterval(timer);try{SvgNest.stop()}catch(_){}resolve(best)};
-      SvgNest.start(()=>{},(svglist,efficiency,placed)=>{
-        if(!svglist||!svglist.length)return;
-        const ids=placedInstances(svglist,unitMap,expected);
-        const cand={results:svglist,efficiency:Number(efficiency||0),placed:ids.length,total:instances.length,sheets:svglist.length,complete:ids.length===instances.length,unitMap,placedIds:ids};
-        if(scoreCandidate(cand,best))best=cand;
-      });
+      const finish=()=>{
+        if(stopped)return;
+        stopped=true;
+        if(timer)clearTimeout(timer);
+        try{SvgNest.stop()}catch(_){}
+        emit(1,best?.results,best?.efficiency,best?.placed,true);
+        resolve(best);
+      };
+      SvgNest.start(
+        progress=>emit(progress,best?.results,best?.efficiency,best?.placed,false),
+        (svglist,efficiency,placed,isBest=false,frame=0)=>{
+          if(!svglist||!svglist.length)return;
+          lastFrame=Number(frame)||lastFrame+1;
+          const ids=placedInstances(svglist,unitMap,expected);
+          const cand={results:svglist,efficiency:Number(efficiency||0),placed:ids.length,total:instances.length,sheets:svglist.length,complete:ids.length===instances.length,unitMap,placedIds:ids,frame:lastFrame};
+          if(scoreCandidate(cand,best))best=cand;
+          emit(Math.min(1,(Date.now()-started)/(seconds*1000)),svglist,efficiency,ids.length,isBest);
+        }
+      );
       timer=setTimeout(finish,seconds*1000);
     });
   }
@@ -355,23 +371,75 @@
     applyCanvasZoom();
   }
 
+  function renderLiveCandidate(svgList,efficiency,placed,total,label,isBest){
+    const wrap=$("canvasWrap");if(!wrap||!svgList?.length)return;
+    wrap.innerHTML="";
+    wrap.classList.add("searching");
+    svgList.forEach((svg,index)=>{
+      const card=document.createElement("div");card.className="result-card search-frame";
+      const head=document.createElement("div");head.className="result-title";
+      head.innerHTML="<strong>"+(label==="remnant"?"Поиск в деловом остатке":"Поиск на новом листом")+" · лист "+(index+1)+"</strong><span>"+(isBest?"Новый лучший вариант":"Текущий кандидат")+"</span>";
+      const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
+      card.appendChild(head);card.appendChild(clone);
+      const summary=document.createElement("div");summary.className="sheet-summary";
+      summary.innerHTML="<span>"+(label==="remnant"?"Деловой остаток":"Новый металлический лист")+"</span><span>Деталей: <strong>"+Number(placed||0)+"/"+Number(total||0)+"</strong> · заполнение: <strong>"+Math.round(Number(efficiency||0)*100)+"%</strong></span>";
+      card.appendChild(summary);wrap.appendChild(card);
+    });
+    $("statSheets").textContent=svgList.length;
+    $("statParts").textContent=Number(placed||0);
+    $("statEfficiency").textContent=Math.round(Number(efficiency||0)*100)+"%";
+    applyCanvasZoom();
+  }
+
   async function mixedRun(){
+    if(state.running)return;
     if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
     const originalInstances=allInstances();if(!originalInstances.length)throw new Error("Количество деталей должно быть больше нуля.");
     const originalRun=state.runId;state.runId=originalRun+1;state.expectedPartCount=originalInstances.length;state.nestingManifest=createNestingManifest();state.lastValidation=null;
     initializeInstanceDiagnostics();
+    state.running=true;state.startedAt=Date.now();state.searchFrames=0;state.bestFrames=0;
+    $("nestButton").disabled=true;$("stopButton").disabled=false;$("downloadButton").disabled=true;$("downloadDxfButton")?.setAttribute("disabled","");
+    status("Расчёт...");
     const remaining=new Map(originalInstances.map(x=>[x.instanceId,x]));
-    const usedResults=[],testedRemnantIds=new Set();
+    const usedResults=[];
     const minL=num("remnantMinLength",500),minW=num("remnantMinWidth",300),gap=num("gap",2);
     let remnants=load().filter(compatible);
     remnants=remnants.filter(r=>classify(r.polygon,minL,minW,gap).business);
     remnants.sort((a,b)=>b.area-a.area);
+    const q=qualityConfig();
+    const maxRemnants=q.seconds<=10?6:q.seconds<=30?10:18;
+    if(remnants.length>maxRemnants)remnants=remnants.slice(0,maxRemnants);
+    const sheet=getSheet();
+    const orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
+    const phases=(enabled("useRemnants",true)?remnants.length:0)+(remaining.size?orientations.length:0);
+    state.durationMs=Math.max(1,phases*Math.max(3,Math.min(12,q.seconds/3))*1000);
+    $("progressBar").style.width="0%";
+    $("runInfo").textContent=phases+" этапов · расчёт времени…";
+    let phaseIndex=0;
+    const updateMixed=(info)=>{
+      if(!state.running)return;
+      const phaseProgress=Math.max(0,Math.min(1,Number(info?.progress)||0));
+      const overall=phases?Math.min(1,(phaseIndex+phaseProgress)/phases):1;
+      $("progressBar").style.width=Math.round(overall*100)+"%";
+      const elapsed=Date.now()-state.startedAt;
+      const eta=Math.max(0,Math.ceil((state.durationMs-elapsed)/1000));
+      const frame=state.searchFrames;
+      const tag=info?.label==="remnant"?"остаток":"лист";
+      $("runInfo").textContent="Поиск · "+tag+" "+(phaseIndex+1)+"/"+Math.max(1,phases)+" · кадр "+frame+" · "+Math.ceil(eta)+" с";
+      status("Ищем раскладку…");
+      if(info?.svglist?.length){
+        state.searchFrames++;
+        renderLiveCandidate(info.svglist,info.efficiency,info.placed,originalInstances.length,info.label,info.isBest);
+      }
+    };
     if(enabled("useRemnants",true)){
       for(const rem of remnants){
-        if(!remaining.size)break;
+        if(!remaining.size||!state.running)break;
         const instances=[...remaining.values()];
-        const run=await runBin(rem.polygon,instances,"remnant");
+        const run=await runBin(rem.polygon,instances,"remnant",updateMixed);
         testedRemnantIds.add(rem.id);
+        phaseIndex++;
+        if(!state.running)break;
         if(!run||!run.placedIds.length)continue;
         run.placedIds.forEach(id=>remaining.delete(id));
         usedResults.push({remnant:rem,results:run.results});
@@ -386,7 +454,9 @@
       const orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
       let best=null;
       for(const s of orientations){
-        const run=await runBin((()=>[{x:0,y:0},{x:s.w,y:0},{x:s.w,y:s.h},{x:0,y:s.h}])(),[...remaining.values()],"new-sheet");
+        if(!state.running)break;
+        const run=await runBin((()=>[{x:0,y:0},{x:s.w,y:0},{x:s.w,y:s.h},{x:0,y:s.h}])(),[...remaining.values()],"new-sheet",updateMixed);
+        phaseIndex++;
         if(run&&(!best||scoreCandidate(run,best)))best=run;
       }
       if(best){
@@ -438,6 +508,10 @@
     status(remaining.size?"Частичный раскрой":"Раскрой рассчитан");
     updateCount(load().length);
     $("downloadButton").disabled=newResults.length===0;
+    $("downloadDxfButton")?.removeAttribute("disabled");
+    state.running=false;
+    $("nestButton").disabled=false;$("stopButton").disabled=true;
+    $("progressBar").style.width="100%";
     return {remaining};
   }
 
