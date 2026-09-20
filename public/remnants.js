@@ -329,7 +329,7 @@
 
   function renderMixed(remnantResults,newResults,meta,placed,total){
     state.remnantResultSvgs=remnantResults.flatMap(x=>x.results||[]);
-    const wrap=$(\"canvasWrap\");wrap.innerHTML=\"\";
+    const wrap=$("canvasWrap");wrap.innerHTML="";
     const visibleRemnants=remnantResults.map((x,i)=>{const r={...(x.remnant||{})};r.displayId="REM-"+String(i+1).padStart(3,"0");return r});
     if(visibleRemnants.length)addRemnantLayerControls(wrap,visibleRemnants);
     const addCard=(svg,title,remnant,remnantIndex)=>{
@@ -453,5 +453,5 @@
     $("nestButton")?.addEventListener("click",()=>{});
   }
   init();
-  window.SheetNestRemnants={load,save,classify,capture,freePolygonsFromSvg};
+  window.SheetNestRemnants={load,save,classify,capture,freePolygonsFromSvg,run:mixedRun,renderMixed};
 })();
