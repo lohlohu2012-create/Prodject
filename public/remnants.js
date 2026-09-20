@@ -411,6 +411,7 @@
     $("nestButton").disabled=true;$("stopButton").disabled=false;$("downloadButton").disabled=true;$("downloadDxfButton")?.setAttribute("disabled","");
     status("Расчёт...");
     const remaining=new Map(originalInstances.map(x=>[x.instanceId,x]));
+    const testedRemnantIds=new Set();
     const usedResults=[];
     const minL=num("remnantMinLength",500),minW=num("remnantMinWidth",300),gap=num("gap",2);
     let remnants=load().filter(compatible);
