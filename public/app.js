@@ -480,6 +480,27 @@ function setupCanvasZoom(){
   updateCanvasZoomUi();
 }
 
+function collectPlacedUnitIds(svgList){
+  const ids=[];
+  let missingMetadata=0;
+  for(const svg of svgList||[]){
+    const groups=Array.from(svg.querySelectorAll("g[data-sheetnest-unit-id]"));
+    const allPlacedGroups=Array.from(svg.querySelectorAll("g[transform*=\"translate(\"]"));
+    if(groups.length!==allPlacedGroups.length)missingMetadata+=Math.max(0,allPlacedGroups.length-groups.length);
+    groups.forEach(group=>ids.push(group.getAttribute("data-sheetnest-unit-id")));
+  }
+  const seen=new Set(),duplicates=[];
+  ids.forEach(id=>{if(seen.has(id))duplicates.push(id);else seen.add(id)});
+  return {occurrences:ids.length,unique:seen.size,duplicates,missingMetadata};
+}
+function validateNestingResult(svgList,enginePlaced,expectedTotal){
+  const info=collectPlacedUnitIds(svgList);
+  const engineCount=Number(enginePlaced||0);
+  const expected=Number(expectedTotal||0);
+  const structurallyValid=info.missingMetadata===0&&info.occurrences===engineCount&&info.unique===info.occurrences&&engineCount<=expected;
+  return {...info,enginePlaced:engineCount,expectedTotal:expected,valid:structurallyValid};
+}
+
 function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",frame:0,isBest:false}){
   const wrap=$("canvasWrap");wrap.innerHTML="";
   const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:sheet.w,sheetH:sheet.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(efficiency||0),placed:Number(placed||0),total:Number(total||0),mode:view.mode,frame:view.frame,isBest:Boolean(view.isBest)};
@@ -505,6 +526,7 @@ function updateProgress(){
 
 function startOneRun(sheet,runDurationMs){
   resetEngine();
+  const expectedTotal=state.expectedPartCount||requestedPartCount();
   const parsed=SvgNest.parsesvg(buildNestingSvg(sheet.w,sheet.h)),bin=parsed.querySelector("#sheet-bin");
   if(!bin)throw new Error("Не удалось создать металлический лист.");
   SvgNest.setbin(bin);
@@ -514,12 +536,18 @@ function startOneRun(sheet,runDurationMs){
     (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
       if(!svglist||!svglist.length)return;
       state.searchFrames++;
-      if(isBest){state.bestFrames++;runBest={results:svglist,efficiency,placed,total,sheet:{w:sheet.w,h:sheet.h},frame};}
+      const validation=validateNestingResult(svglist,placed,expectedTotal);
+      state.lastValidation=validation;
+      const shownPlaced=validation.unique;
+      if(isBest&&validation.valid){
+        state.bestFrames++;
+        runBest={results:svglist,efficiency,placed:shownPlaced,total:expectedTotal,sheet:{w:sheet.w,h:sheet.h},frame,validation};
+      }
       state.resultSvgs=svglist;
-      renderResults(svglist,efficiency,placed,total,sheet,{mode:"search",frame,isBest});
-      const tag=isBest?"Новый лучший":"Кандидат";
-      $("runInfo").textContent=`${tag} · кадр ${state.searchFrames} · ${placed||0}/${total||0} деталей · ${Math.round((efficiency||0)*100)}% заполнение`;
-      $("status").textContent="Ищем раскладку…";
+      renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
+      const tag=!validation.valid?"Непроверенный кандидат":(isBest?"Новый лучший":"Кандидат");
+      $("runInfo").textContent=tag+" · кадр "+state.searchFrames+" · "+shownPlaced+"/"+expectedTotal+" деталей · "+Math.round((efficiency||0)*100)+"% заполнение";
+      $("status").textContent=validation.valid?"Ищем раскладку…":"Проверяем геометрию результата…";
     }
   );
   return new Promise(resolve=>{
@@ -540,6 +568,9 @@ function betterNestingCandidate(next,best){
   }
   const nextSheets=Array.isArray(next.results)?next.results.length:Infinity;
   const bestSheets=Array.isArray(best.results)?best.results.length:Infinity;
+  const nextValid=next.validation?next.validation.valid!==false:true;
+  const bestValid=best.validation?best.validation.valid!==false:true;
+  if(nextValid!==bestValid)return nextValid;
   if(nextSheets!==bestSheets)return nextSheets<bestSheets;
   return Number(next.efficiency||0)>Number(best.efficiency||0);
 }
@@ -548,6 +579,9 @@ async function runSearch(){
   if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
   if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
   const sheet=getSheet(),q=qualityConfig(),orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
+  state.nestingManifest=createNestingManifest();
+  state.expectedPartCount=requestedPartCount();
+  state.lastValidation=null;
   $("nestButton").disabled=true;$("stopButton").disabled=false;$("downloadButton").disabled=true;status("Расчёт...");
   state.running=true;state.resultSvgs=[];state.resultMeta=null;state.bestResultSvgs=[];state.bestResultMeta=null;state.searchFrames=0;state.bestFrames=0;state.durationMs=q.seconds*1000/orientations.length;$("progressBar").style.width="0%";
   let bestOverall=null;
@@ -560,9 +594,10 @@ async function runSearch(){
         results:runBest.results,
         efficiency:Number(runBest.efficiency||0),
         placed:Number(runBest.placed||0),
-        total:Number(runBest.total||0),
+        total:state.expectedPartCount,
         sheet:{w:candidate.w,h:candidate.h},
-        frame:runBest.frame
+        frame:runBest.frame,
+        validation:runBest.validation
       };
       if(betterNestingCandidate(current,bestOverall))bestOverall=current;
     }
@@ -570,7 +605,7 @@ async function runSearch(){
   try{SvgNest.stop()}catch(_){}
   state.running=false;$("nestButton").disabled=false;$("stopButton").disabled=true;
   if(bestOverall){
-    const complete=bestOverall.placed>=bestOverall.total;
+    const complete=Boolean(bestOverall.validation&&bestOverall.validation.valid&&bestOverall.placed>=state.expectedPartCount);
     const meta={
       material:$("material").value,
       thickness:readNumber("thickness",3),
@@ -580,8 +615,9 @@ async function runSearch(){
       gap:readNumber("gap",2),
       efficiency:bestOverall.efficiency,
       placed:bestOverall.placed,
-      total:bestOverall.total,
-      complete
+      total:state.expectedPartCount,
+      complete,
+      validation:bestOverall.validation||null
     };
     state.resultSvgs=bestOverall.results;
     state.bestResultSvgs=bestOverall.results;
@@ -589,11 +625,11 @@ async function runSearch(){
     state.resultMeta=meta;
     renderResults(bestOverall.results,bestOverall.efficiency,bestOverall.placed,bestOverall.total,bestOverall.sheet,{mode:"final",frame:bestOverall.frame,isBest:complete});
     if(complete){
-      $("runInfo").textContent=`Готово · ${bestOverall.results.length} лист(ов) · ${bestOverall.placed}/${bestOverall.total} деталей · ${Math.round(bestOverall.efficiency*100)}% заполнение · просмотрено ${state.searchFrames} вариантов`;
+      $("runInfo").textContent="Готово · "+bestOverall.results.length+" лист(ов) · "+bestOverall.placed+"/"+state.expectedPartCount+" деталей · "+Math.round(bestOverall.efficiency*100)+"% заполнение · просмотрено "+state.searchFrames+" вариантов";
       status("Раскрой рассчитан");
     }else{
-      const missing=Math.max(0,bestOverall.total-bestOverall.placed);
-      $("runInfo").textContent=`Частичный результат · ${bestOverall.results.length} лист(ов) · ${bestOverall.placed}/${bestOverall.total} деталей · не размещено: ${missing}`;
+      const missing=Math.max(0,state.expectedPartCount-bestOverall.placed);
+      $("runInfo").textContent="Частичный результат · "+bestOverall.results.length+" лист(ов) · "+bestOverall.placed+"/"+state.expectedPartCount+" деталей · не размещено: "+missing;
       status("Частичный раскрой");
     }
     $("progressBar").style.width="100%";
