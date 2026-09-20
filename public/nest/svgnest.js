@@ -76,6 +76,35 @@
 			return svg;
 		}
 		
+		this.inspectSvg = function(svgstring){
+			// Inspect the same geometry interpretation used by the nesting engine.
+			this.stop();
+			bin = null;
+			binPolygon = null;
+			tree = null;
+			var inspectedSvg = SvgParser.load(svgstring);
+			inspectedSvg = SvgParser.clean();
+			var inspectedParts = this.getParts(inspectedSvg.childNodes);
+			var contourCount = 0;
+			var holeCount = 0;
+			function countTree(nodes){
+				for(var i=0; i<nodes.length; i++){
+					contourCount++;
+					if(nodes[i].children && nodes[i].children.length > 0){
+						holeCount += nodes[i].children.length;
+						countTree(nodes[i].children);
+					}
+				}
+			}
+			countTree(inspectedParts);
+			return {
+				parts: inspectedParts.length,
+				contours: contourCount,
+				holes: holeCount,
+				droppedContours: Math.max(0, inspectedSvg.childNodes.length - contourCount)
+			};
+		};
+		
 		this.setbin = function(element){
 			if(!svg){
 				return;
@@ -618,6 +647,22 @@
 						
 			// turn the list into a tree
 			toTree(polygons);
+
+			// Persist one stable id for every root nesting unit.
+			for(i=0; i<polygons.length; i++){
+				var rootPoly = polygons[i];
+				var rootElement = paths[rootPoly.source];
+				if(rootElement){
+					var sourceInstanceId = rootElement.getAttribute('data-sheetnest-source-instance-id') || 'part';
+					var unitId = rootElement.getAttribute('data-sheetnest-unit-id');
+					if(!unitId){
+						unitId = sourceInstanceId + ':unit-' + rootPoly.id;
+						rootElement.setAttribute('data-sheetnest-unit-id', unitId);
+					}
+					rootPoly.sheetnestUnitId = unitId;
+					rootPoly.sheetnestSourceInstanceId = sourceInstanceId;
+				}
+			}
 			
 			function toTree(list, idstart){
 				var parents = [];
@@ -778,6 +823,12 @@
 					// the original path could have transforms and stuff on it, so apply our transforms on a group
 					var partgroup = document.createElementNS(svg.namespaceURI, 'g');
 					partgroup.setAttribute('transform','translate('+p.x+' '+p.y+') rotate('+p.rotation+')');
+					if(part.sheetnestUnitId){
+						partgroup.setAttribute('data-sheetnest-unit-id', part.sheetnestUnitId);
+					}
+					if(part.sheetnestSourceInstanceId){
+						partgroup.setAttribute('data-sheetnest-source-instance-id', part.sheetnestSourceInstanceId);
+					}
 					partgroup.appendChild(clone[part.source]);
 					
 					if(part.children && part.children.length > 0){
