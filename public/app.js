@@ -596,7 +596,7 @@ function diagnosticsSnapshot(){
 }
 function diagnosticsCsv(snapshot){
   const columns=["instanceId","sourceId","type","name","status","stage","failureStage","issue","expectedUnits","unitIds","candidateUnitIds","bestCandidateUnitIds","finalUnitIds","candidateFrame"];
-  const cell=value=>"""+String(value??"").replace(/"/g,"""")+""";
+  const cell=value=>"\"" + String(value??"").replace(/"/g,"\"\"") + "\"";
   const rows=snapshot.entries.map(entry=>[
     entry.instanceId,entry.sourceId,entry.type,entry.name,entry.status,entry.stage,entry.failureStage,entry.issue,
     entry.expectedUnits,entry.unitIds.join(" | "),entry.candidateUnitIds.join(" | "),
