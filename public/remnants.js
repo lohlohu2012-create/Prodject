@@ -477,6 +477,10 @@
       }
     }
 
+    if(!state.running){
+      return {remaining};
+    }
+
     const placed=originalInstances.length-remaining.size,total=originalInstances.length;
     const meta={material:document.getElementById("material").value,thickness:num("thickness",3),sheetW:getSheet().w,sheetH:getSheet().h,margin:num("margin",10),gap,efficiency:total?placed/total:0,placed,total};
     state.resultSvgs=newResults;state.bestResultSvgs=newResults;state.resultMeta=meta;state.bestResultMeta=meta;
