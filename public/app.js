@@ -643,7 +643,7 @@ function updateDiagnosticsFromCandidate(svgList,isBest,frame,validation){
   });
   renderDiagnosticsPanel();
 }
-function finalizeDiagnostics(svgList){
+function finalizeDiagnostics(svgList,reason="complete"){
   const finalSet=new Set(collectPlacedUnitIds(svgList).unitIds);
   diagnosticEntries().forEach(entry=>{
     entry.finalUnitIds=entry.unitIds.filter(unitId=>finalSet.has(unitId));
@@ -655,9 +655,13 @@ function finalizeDiagnostics(svgList){
     }else if(!entry.parsed||entry.unitIds.length<entry.expectedUnits){
       entry.status="lost";entry.stage="SvgNest.parse/getParts";entry.issue="Потерян при построении nesting units: "+entry.unitIds.length+"/"+entry.expectedUnits+".";
     }else if(entry.candidateUnitIds.length===0){
-      entry.status="lost";entry.stage="NFP / PlacementWorker";entry.issue="Экземпляр распознан, но ни один кандидат не разместил его.";
+      entry.status="lost";
+      entry.stage="NFP / PlacementWorker";
+      entry.issue=reason==="no-valid-result"?"Экземпляр распознан, но валидный кандидат с ним не найден.":"Экземпляр распознан, но ни один кандидат не разместил его.";
     }else{
-      entry.status="lost";entry.stage="Выбор финального результата";entry.issue="Экземпляр встречался в кандидатах, но не вошёл в финальную раскладку.";
+      entry.status="lost";
+      entry.stage="Выбор финального результата";
+      entry.issue=reason==="no-valid-result"?"Экземпляр встречался в кандидатах, но валидная финальная раскладка не была принята.":"Экземпляр встречался в кандидатах, но не вошёл в финальную раскладку.";
     }
   });
   renderDiagnosticsPanel(true);
@@ -821,6 +825,7 @@ async function runSearch(){
     }
     $("progressBar").style.width="100%";
   }else{
+    finalizeDiagnostics([],"no-valid-result");
     $("runInfo").textContent="Допустимую раскладку не удалось найти.";
     status("Нет результата");
   }
