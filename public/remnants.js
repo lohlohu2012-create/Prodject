@@ -323,18 +323,51 @@
   }
 
   function remnantOverlayGroup(svg,remnant,index){
-    if(!svg||!remnant||!Array.isArray(remnant.polygon)||remnant.polygon.length<3)return null;
-    const b=bounds(remnant.polygon);if(!Number.isFinite(b.width)||!Number.isFinite(b.height))return null;
-    const vb=(svg.getAttribute("viewBox")||"0 0 "+b.width+" "+b.height).split(/[ ,]+/).map(Number);
-    const ox=Number.isFinite(vb[0])?vb[0]:0,oy=Number.isFinite(vb[1])?vb[1]:0;
-    const ns="http://www.w3.org/2000/svg",g=document.createElementNS(ns,"g");g.classList.add("remnant-overlay");g.setAttribute("data-remnant-overlay",remnant.id||String(index));
-    const points=remnant.polygon.map(p=>(p.x-b.minX+ox)+","+(p.y-b.minY+oy)).join(" ");
-    const shape=document.createElementNS(ns,"polygon");shape.setAttribute("points",points);shape.classList.add("remnant-overlay-shape");g.appendChild(shape);
-    const fit=classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),Number(document.getElementById("gap")?.value||2));
-    const cx=b.minX+(b.width/2)+ox,cy=b.minY+(b.height/2)+oy;
-    const label=document.createElementNS(ns,"text");label.setAttribute("x",cx);label.setAttribute("y",cy-8);label.setAttribute("text-anchor","middle");label.classList.add("remnant-overlay-label");label.textContent=remnant.displayId||("REM-"+String(index+1).padStart(3,"0"));g.appendChild(label);
-    const meta=document.createElementNS(ns,"text");meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);meta.setAttribute("text-anchor","middle");meta.classList.add("remnant-overlay-meta");meta.textContent=Math.round(b.width)+" × "+Math.round(b.height)+" мм · "+(fit.orientation===90?"90°":"0°");g.appendChild(meta);
-    return g;
+    try{
+      if(!svg||!remnant||!Array.isArray(remnant.polygon)||remnant.polygon.length<3)return null;
+      const sourceBounds=bounds(remnant.polygon);
+      if(!Number.isFinite(sourceBounds.width)||!Number.isFinite(sourceBounds.height)||sourceBounds.width<=0||sourceBounds.height<=0)return null;
+      const rawViewBox=(svg.getAttribute("viewBox")||"").trim().split(/[ ,]+/).map(Number);
+      const vb=rawViewBox.length===4&&rawViewBox.every(Number.isFinite)
+        ? {x:rawViewBox[0],y:rawViewBox[1],width:Math.max(1,rawViewBox[2]),height:Math.max(1,rawViewBox[3])}
+        : {x:0,y:0,width:Math.max(1,sourceBounds.width),height:Math.max(1,sourceBounds.height)};
+      const scaleX=vb.width/Math.max(sourceBounds.width,1);
+      const scaleY=vb.height/Math.max(sourceBounds.height,1);
+      const ns="http://www.w3.org/2000/svg";
+      const g=document.createElementNS(ns,"g");
+      g.classList.add("remnant-overlay");
+      g.setAttribute("data-remnant-overlay",String(remnant.id||index));
+      const points=remnant.polygon.map(p=>{
+        const x=vb.x+(Number(p.x)-sourceBounds.minX)*scaleX;
+        const y=vb.y+(Number(p.y)-sourceBounds.minY)*scaleY;
+        return Number.isFinite(x)&&Number.isFinite(y)?x+","+y:null;
+      }).filter(Boolean).join(" ");
+      if(!points)return null;
+      const shape=document.createElementNS(ns,"polygon");
+      shape.setAttribute("points",points);
+      shape.classList.add("remnant-overlay-shape");
+      g.appendChild(shape);
+      let orientation=Number(remnant.orientation);
+      if(orientation!==90)orientation=0;
+      try{
+        const fit=classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),Number(document.getElementById("gap")?.value||2));
+        if(fit&&fit.business)orientation=fit.orientation===90?90:0;
+      }catch(_){}
+      const cx=vb.x+vb.width/2,cy=vb.y+vb.height/2;
+      const label=document.createElementNS(ns,"text");
+      label.setAttribute("x",cx);label.setAttribute("y",cy-8);label.setAttribute("text-anchor","middle");
+      label.classList.add("remnant-overlay-label");
+      label.textContent=String(remnant.displayId||("REM-"+String(index+1).padStart(3,"0")));
+      g.appendChild(label);
+      const meta=document.createElementNS(ns,"text");
+      meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);meta.setAttribute("text-anchor","middle");
+      meta.classList.add("remnant-overlay-meta");
+      meta.textContent=Math.round(sourceBounds.width)+" × "+Math.round(sourceBounds.height)+" мм · "+(orientation===90?"90°":"0°");
+      g.appendChild(meta);
+      return g;
+    }catch(_){
+      return null;
+    }
   }
 
   function addRemnantLayerControls(wrap,remnants){
