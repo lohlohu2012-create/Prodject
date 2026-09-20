@@ -425,7 +425,6 @@
       .remnant-overlay-label{font-family:Arial,sans-serif;font-size:18px;font-weight:700;fill:#9af0b5;paint-order:stroke;stroke:#102116;stroke-width:5px;stroke-linejoin:round}
       .remnant-overlay-meta{font-family:Arial,sans-serif;font-size:12px;fill:#d1f5da;paint-order:stroke;stroke:#102116;stroke-width:4px;stroke-linejoin:round}
       .remnant-list{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}.remnant-chip{padding:6px 8px;border:1px solid #304237;border-radius:6px;background:rgba(255,255,255,.025);color:#aebbb2;font-size:10px}.remnant-chip b{color:#d7eadc}
-    `;
       .free-area-overlay{pointer-events:none}.free-area-overlay-shape{fill:rgba(255,184,62,.18);stroke:#ffb83e;stroke-width:1.8;vector-effect:non-scaling-stroke;stroke-dasharray:3 3}
       .free-area-overlay-label{font-family:Arial,sans-serif;font-size:11px;font-weight:700;fill:#ffd27a;paint-order:stroke;stroke:#241b0a;stroke-width:4px;stroke-linejoin:round}
       .free-area-legend{display:flex;align-items:center;gap:6px;color:#a89a7e}.free-area-legend i{display:block;width:12px;height:12px;border-radius:3px;background:rgba(255,184,62,.18);border:2px dashed #ffb83e}
