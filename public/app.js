@@ -647,7 +647,19 @@ $("fileInput").addEventListener("change",async event=>{
       const ext=file.name.split(".").pop().toLowerCase();let svgText;
       if(ext==="svg")svgText=await file.text();else if(ext==="dxf")svgText=dxfTextToSvg(await file.text());else throw new Error("Поддерживаются только DXF и SVG.");
       const elements=sourceElements(svgText);
-      imported.push({id:"cad-"+Date.now()+"-"+Math.random().toString(36).slice(2),name:file.name,svgText,quantity:1,elementsCount:elements.length});
+      const inspection=SvgNest.inspectSvg(svgText);
+      if(!inspection||inspection.parts<1)throw new Error("В файле не найдено ни одной замкнутой детали.");
+      imported.push({
+        id:"cad-"+Date.now()+"-"+Math.random().toString(36).slice(2),
+        name:file.name,
+        svgText,
+        quantity:1,
+        elementsCount:elements.length,
+        nestingUnits:inspection.parts,
+        contours:inspection.contours,
+        holes:inspection.holes,
+        droppedContours:inspection.droppedContours
+      });
     }catch(err){failed.push(file.name+": "+err.message);}
   }
   if(imported.length){
