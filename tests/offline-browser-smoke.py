@@ -217,6 +217,12 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         unit_ids = eval_js("Array.from(document.querySelectorAll('#canvasWrap g[data-sheetnest-unit-id]')).map(node => node.getAttribute('data-sheetnest-unit-id'))")
         if len(unit_ids) != len(set(unit_ids)) or len(unit_ids) != 3:
             raise RuntimeError(f"Placed unit ids are not one-to-one: {unit_ids!r}")
+        diagnostic_count = eval_js("document.querySelectorAll('#diagnosticsList .diagnostic-row').length")
+        diagnostic_bad = eval_js("document.querySelectorAll('#diagnosticsList .diagnostic-row.bad').length")
+        diagnostic_panel_hidden = eval_js("document.getElementById('diagnosticsPanel').hidden")
+        diagnostic_ok_status = eval_js("Array.from(document.querySelectorAll('#diagnosticsList .diagnostic-row')).every(row => row.classList.contains('ok'))")
+        if diagnostic_count != 3 or diagnostic_bad != 0 or diagnostic_panel_hidden or not diagnostic_ok_status:
+            raise RuntimeError(f"Instance diagnostics mismatch: rows={diagnostic_count}, bad={diagnostic_bad}, hidden={diagnostic_panel_hidden}, all_ok={diagnostic_ok_status}")
         if int(frames) < 1:
             raise RuntimeError(f"Live nesting preview did not receive candidate frames: frames={frames}")
 
