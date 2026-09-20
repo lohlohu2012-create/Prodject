@@ -1,4 +1,4 @@
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -50,10 +50,48 @@ function shapePath(shape){
 function shapePreview(shape){
   return "<svg viewBox=\"0 0 "+shape.w+" "+shape.h+"\" aria-hidden=\"true\"><path d=\""+shapePath(shape)+"\"/></svg>";
 }
+function normalizedQuantity(part){return Math.max(1,Math.min(9999,Math.floor(Number(part&&part.quantity)||1)))}
+function partNestingUnits(part){return Math.max(1,Math.floor(Number(part&&part.nestingUnits)||1))}
 function requestedPartCount(){
-  const custom=state.customParts.reduce((sum,part)=>sum+Math.max(1,Math.floor(part.quantity||1)),0);
-  const library=state.libraryParts.reduce((sum,part)=>sum+Math.max(1,Math.floor(part.quantity||1)),0);
+  const custom=state.customParts.reduce((sum,part)=>sum+normalizedQuantity(part)*partNestingUnits(part),0);
+  const library=state.libraryParts.reduce((sum,part)=>sum+normalizedQuantity(part)*partNestingUnits(part),0);
   return custom+library;
+}
+function estimateSvgBounds(svgText){
+  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml"),root=doc.documentElement;
+  if(!root||root.nodeName.toLowerCase()!=="svg")return{minX:0,minY:0,width:1,height:1};
+  const vb=(root.getAttribute("viewBox")||"").trim().split(/[ ,]+/).map(Number);
+  if(vb.length===4&&vb.every(Number.isFinite))return{minX:vb[0],minY:vb[1],width:Math.max(1,Math.abs(vb[2])),height:Math.max(1,Math.abs(vb[3]))};
+  const width=parseFloat(root.getAttribute("width"))||1,height=parseFloat(root.getAttribute("height"))||1;
+  return{minX:0,minY:0,width:Math.max(1,width),height:Math.max(1,height)};
+}
+function stampNestingSource(node,instanceId,partId){
+  if(!node||node.nodeType!==1)return;
+  node.setAttribute("data-sheetnest-source-instance-id",instanceId);
+  if(partId)node.setAttribute("data-sheetnest-source",partId);
+  node.removeAttribute("id");
+  Array.from(node.children||[]).forEach(child=>stampNestingSource(child,instanceId,partId));
+}
+function appendStagedInstance(root,elements,bounds,instanceId,partId,stageX,stageY){
+  const ns="http://www.w3.org/2000/svg";
+  const group=document.createElementNS(ns,"g");
+  group.setAttribute("data-sheetnest-stage-instance",instanceId);
+  group.setAttribute("transform","translate("+ (stageX-bounds.minX) +" "+ (stageY-bounds.minY) +")");
+  elements.forEach(element=>{
+    const clone=element.cloneNode(true);
+    stampNestingSource(clone,instanceId,partId);
+    group.appendChild(clone);
+  });
+  root.appendChild(group);
+}
+function createNestingManifest(){
+  const manifest=[];
+  state.customParts.forEach(part=>manifest.push({id:part.id,name:part.name,type:"cad",quantity:normalizedQuantity(part),units:partNestingUnits(part)}));
+  state.libraryParts.forEach(part=>{
+    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
+    if(shape)manifest.push({id:part.id,name:shape.name,type:"library",quantity:normalizedQuantity(part),units:1});
+  });
+  return manifest;
 }
 
 function appendSourcePreview(container,svgText){
@@ -71,7 +109,7 @@ function appendSourcePreview(container,svgText){
 function addCustomPartCard(item){
   const wrap=$("selectedParts");if(!wrap)return;
   const row=document.createElement("div");row.className="selected-part selected-part-cad";row.dataset.partId=item.id;
-  row.innerHTML="<div class=\"selected-part-thumb cad-thumb\"></div><div class=\"selected-part-info\"><b>"+escapeHtml(item.name)+"</b><small>CAD · "+item.elementsCount+" контур(ов)</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+item.quantity+"\" aria-label=\"Количество "+escapeHtml(item.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(item.name)+"\">×</button>";
+  row.innerHTML="<div class=\"selected-part-thumb cad-thumb\"></div><div class=\"selected-part-info\"><b>"+escapeHtml(item.name)+"</b><small>CAD · "+item.nestingUnits+" дет. · "+item.contours+" контур(ов) · "+item.holes+" внутр.</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+item.quantity+"\" aria-label=\"Количество "+escapeHtml(item.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(item.name)+"\">×</button>";
   appendSourcePreview(row.querySelector(".cad-thumb"),item.svgText);
   row.querySelector(".selected-part-qty").addEventListener("change",event=>{
     const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));event.target.value=String(value);
@@ -87,7 +125,7 @@ function updateGeometryInfo(){
   const chip=$("geometryInfo"),fileLine=$("fileName");
   if(!chip)return;
   const bits=[];
-  if(state.customParts.length)bits.push(...state.customParts.map(part=>part.name+" × "+part.quantity));
+  if(state.customParts.length)bits.push(...state.customParts.map(part=>part.name+" × "+part.quantity+" · "+partNestingUnits(part)+" дет./экз."));
   if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);return (shape?shape.name:part.id)+" × "+part.quantity;}));
   if(fileLine)fileLine.textContent=state.customParts.length?state.customParts.length+" CAD-файл(ов): "+state.customParts.map(part=>part.name).join(", "):"Файл не выбран";
   const partsTotal=$("partsTotal");if(partsTotal)partsTotal.textContent=requestedPartCount();
@@ -124,7 +162,7 @@ function setupShapeLibrary(){
       const quantity=Math.max(1,Math.min(9999,Math.floor(Number(input.value)||1)));
       input.value="1";
       const existing=state.libraryParts.find(entry=>entry.id===shape.id);
-      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);else state.libraryParts.push({id:shape.id,quantity});
+      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);else state.libraryParts.push({id:shape.id,quantity,nestingUnits:1,contours:1,holes:0});
       renderSelectedShapes();updateGeometryInfo();status("Фигура добавлена");
     });
     library.appendChild(card);
