@@ -183,6 +183,19 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
           qualityConfig = () => ({seconds: 5, populationSize: 4, mutationRate: 1});
         """)
 
+        debug_nesting = eval_js("""(() => {
+          const raw=buildNestingSvg(300,300);
+          const parsed=SvgNest.parsesvg(raw);
+          const children=Array.from(parsed.childNodes).filter(node => node.nodeType === 1).map(node => ({
+            tag: node.tagName,
+            id: node.getAttribute('id'),
+            stage: node.getAttribute('data-sheetnest-stage-instance'),
+            source: node.getAttribute('data-sheetnest-source-instance-id')
+          }));
+          const parts=SvgNest.getParts(Array.from(parsed.childNodes).filter(node => node.nodeType === 1));
+          return {children, partCount:parts.length};
+        })()""")
+        print("debug nesting:", json.dumps(debug_nesting, ensure_ascii=False))
         eval_js("document.getElementById('nestButton').click()")
 
         deadline = time.time() + 15
