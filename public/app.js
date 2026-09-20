@@ -787,33 +787,49 @@ function startOneRun(sheet,runDurationMs,runId){
   if(!bin)throw new Error("Не удалось создать металлический лист.");
   SvgNest.setbin(bin);
   let runBest=null;
-  SvgNest.start(
-    progress=>{if(state.running)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`;},
-    (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
-      if(!state.running||runId!==state.runId)return;
-      if(!svglist||!svglist.length)return;
-      state.searchFrames++;
-      const validation=validateNestingResult(svglist,placed,expectedTotal);
-      state.lastValidation=validation;
-       updateDiagnosticsFromCandidate(svglist,isBest,frame,validation);
-      const shownPlaced=validation.unique;
-      if(isBest&&validation.valid){
-        state.bestFrames++;
-        runBest={results:svglist,efficiency,placed:shownPlaced,total:expectedTotal,sheet:{w:sheet.w,h:sheet.h},frame,validation};
-      }
-      state.resultSvgs=svglist;
-      renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
-      const tag=!validation.valid?"Непроверенный кандидат":(isBest?"Новый лучший":"Кандидат");
-      $("runInfo").textContent=tag+" · кадр "+state.searchFrames+" · "+shownPlaced+"/"+expectedTotal+" деталей · "+Math.round((efficiency||0)*100)+"% заполнение";
-      $("status").textContent=validation.valid?"Ищем раскладку…":"Проверяем геометрию результата…";
-    }
-  );
   return new Promise(resolve=>{
-    const timer=setInterval(()=>{
-      if(!state.running){clearInterval(timer);resolve(runBest);return;}
+    let settled=false,timer=null,interval=null;
+    const settle=(reason)=>{
+      if(settled)return;
+      settled=true;
+      if(timer)clearTimeout(timer);
+      if(interval)clearInterval(interval);
+      try{SvgNest.stop()}catch(_){}
+      if(reason==="timeout")state.running=false;
+      resolve(runBest);
+    };
+    const updateTimer=()=>{
+      if(!state.running){settle("stopped");return;}
       updateProgress();
-      if(Date.now()-state.startedAt>=runDurationMs){clearInterval(timer);try{SvgNest.stop()}catch(_){}resolve(runBest);}
-    },120);
+    };
+    try{
+      SvgNest.start(
+        progress=>{if(state.running&&runId===state.runId)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`;},
+        (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
+          if(!state.running||runId!==state.runId)return;
+          if(!svglist||!svglist.length)return;
+          state.searchFrames++;
+          const validation=validateNestingResult(svglist,placed,expectedTotal);
+          state.lastValidation=validation;
+          updateDiagnosticsFromCandidate(svglist,isBest,frame,validation);
+          const shownPlaced=validation.unique;
+          if(isBest&&validation.valid){
+            state.bestFrames++;
+            runBest={results:svglist,efficiency,placed:shownPlaced,total:expectedTotal,sheet:{w:sheet.w,h:sheet.h},frame,validation};
+          }
+          state.resultSvgs=svglist;
+          renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
+          const tag=!validation.valid?"Непроверенный кандидат":(isBest?"Новый лучший":"Кандидат");
+          $("runInfo").textContent=tag+" · кадр "+state.searchFrames+" · "+shownPlaced+"/"+expectedTotal+" деталей · "+Math.round((efficiency||0)*100)+"% заполнение";
+          $("status").textContent=validation.valid?"Ищем раскладку…":"Проверяем геометрию результата…";
+        }
+      );
+    }catch(err){
+      settle("error");
+      throw err;
+    }
+    interval=setInterval(updateTimer,120);
+    timer=setTimeout(()=>settle("timeout"),Math.max(1000,Number(runDurationMs)||1000));
   });
 }
 function betterNestingCandidate(next,best){
@@ -834,6 +850,8 @@ function betterNestingCandidate(next,best){
 }
 
 async function runSearch(){
+  try{
+
   if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
   if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
   const sheet=getSheet(),q=qualityConfig(),orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
@@ -952,4 +970,11 @@ function setupDiagnosticsPanel(){
 setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
 setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
-window.state=state;
+window.state=state
+  }finally{
+    state.running=false;
+    try{SvgNest.stop()}catch(_){}
+    $("nestButton").disabled=false;
+    $("stopButton").disabled=true;
+  }
+}
