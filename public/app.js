@@ -536,7 +536,7 @@ function collectPlacedUnitIds(svgList){
   }
   const seen=new Set(),duplicates=[];
   ids.forEach(id=>{if(seen.has(id))duplicates.push(id);else seen.add(id)});
-  return {occurrences:ids.length,unique:seen.size,duplicates,missingMetadata};
+  return {occurrences:ids.length,unique:seen.size,duplicates,missingMetadata,unitIds:ids};
 }
 function validateNestingResult(svgList,enginePlaced,expectedTotal){
   const info=collectPlacedUnitIds(svgList);
@@ -546,6 +546,145 @@ function validateNestingResult(svgList,enginePlaced,expectedTotal){
   return {...info,enginePlaced:engineCount,expectedTotal:expected,valid:structurallyValid};
 }
 
+function diagnosticAddUnique(list,value){
+  if(value&&list.indexOf(value)<0)list.push(value);
+}
+function diagnosticEntries(){return Object.values(state.instanceDiagnostics||{})}
+function diagnosticStatusLabel(entry){
+  if(entry.status==="placed")return"Размещено";
+  if(entry.status==="lost")return"Потеряно";
+  if(entry.status==="candidate")return"Кандидат";
+  if(entry.status==="parsed")return"Распознано";
+  if(entry.status==="staged")return"Staging";
+  if(entry.status==="parser_error")return"Ошибка парсера";
+  return"Импортировано";
+}
+function diagnosticStageLabel(entry){return entry.stage||"Импорт"}
+function diagnosticStatusClass(entry){
+  return entry.status==="placed"?"ok":entry.status==="lost"||entry.status==="parser_error"?"bad":entry.status==="candidate"?"warn":"idle";
+}
+function initializeInstanceDiagnostics(){
+  state.instanceDiagnostics={};
+  state.unitToInstance={};
+  state.customParts.forEach(part=>{
+    const quantity=normalizedQuantity(part);
+    for(let copy=0;copy<quantity;copy++){
+      const instanceId=part.id+"#"+(copy+1);
+      state.instanceDiagnostics[instanceId]={
+        instanceId,sourceId:part.id,name:part.name,type:"CAD",
+        expectedUnits:partNestingUnits(part),unitIds:[],candidateUnitIds:[],bestCandidateUnitIds:[],finalUnitIds:[],
+        staged:false,parsed:false,status:"imported",stage:"Импорт",issue:"Экземпляр создан.",candidateFrame:0
+      };
+    }
+  });
+  state.libraryParts.forEach(part=>{
+    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
+    for(let copy=0;copy<normalizedQuantity(part);copy++){
+      const instanceId="library-"+shape.id+"#"+(copy+1);
+      state.instanceDiagnostics[instanceId]={
+        instanceId,sourceId:shape.id,name:shape.name,type:"Типовая",
+        expectedUnits:1,unitIds:[],candidateUnitIds:[],bestCandidateUnitIds:[],finalUnitIds:[],
+        staged:false,parsed:false,status:"imported",stage:"Импорт",issue:"Экземпляр создан.",candidateFrame:0
+      };
+    }
+  });
+  renderDiagnosticsPanel();
+}
+function markDiagnosticsStaged(svgText){
+  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");
+  const staged=new Set(Array.from(doc.querySelectorAll("[data-sheetnest-stage-instance]")).map(node=>node.getAttribute("data-sheetnest-stage-instance")).filter(Boolean));
+  diagnosticEntries().forEach(entry=>{
+    if(staged.has(entry.instanceId)){
+      entry.staged=true;entry.status="staged";entry.stage="Staging";entry.issue="Экземпляр передан в SvgNest.";
+    }else{
+      entry.staged=false;entry.status="lost";entry.stage="Staging";entry.issue="Экземпляр не попал в подготовленный SVG.";
+    }
+  });
+  renderDiagnosticsPanel();
+}
+function registerParsedUnits(parsed){
+  const elements=Array.from(parsed.querySelectorAll("[data-sheetnest-unit-id]"));
+  const parsedByInstance={};
+  elements.forEach(node=>{
+    const unitId=node.getAttribute("data-sheetnest-unit-id");
+    const instanceId=node.getAttribute("data-sheetnest-source-instance-id");
+    if(!unitId||!instanceId)return;
+    state.unitToInstance[unitId]=instanceId;
+    const entry=state.instanceDiagnostics[instanceId];if(!entry)return;
+    diagnosticAddUnique(entry.unitIds,unitId);
+    parsedByInstance[instanceId]=(parsedByInstance[instanceId]||0)+1;
+  });
+  diagnosticEntries().forEach(entry=>{
+    const parsedCount=parsedByInstance[entry.instanceId]||0;
+    entry.parsed=parsedCount>0;
+    if(parsedCount>=entry.expectedUnits){
+      entry.status="parsed";entry.stage="SvgNest.parse/getParts";entry.issue="Все ожидаемые nesting units распознаны.";
+    }else if(parsedCount>0){
+      entry.status="lost";entry.stage="SvgNest.parse/getParts";entry.issue="Распознано "+parsedCount+" из "+entry.expectedUnits+" nesting units.";
+    }else if(entry.status!=="lost"){
+      entry.status="parser_error";entry.stage="SvgNest.parse/getParts";entry.issue="SvgNest не создал ни одного nesting unit.";
+    }
+  });
+  renderDiagnosticsPanel();
+}
+function updateDiagnosticsFromCandidate(svgList,isBest,frame,validation){
+  const info=collectPlacedUnitIds(svgList);
+  info.unitIds.forEach(unitId=>{
+    const instanceId=state.unitToInstance[unitId],entry=state.instanceDiagnostics[instanceId];
+    if(!entry)return;
+    diagnosticAddUnique(entry.candidateUnitIds,unitId);
+    if(isBest&&validation.valid)diagnosticAddUnique(entry.bestCandidateUnitIds,unitId);
+    entry.candidateFrame=frame;
+    if(entry.finalUnitIds.length<entry.expectedUnits){
+      entry.status="candidate";
+      entry.stage=isBest&&validation.valid?"Лучший найденный кандидат":"PlacementWorker / кандидат";
+      entry.issue="Вариант содержит "+entry.candidateUnitIds.length+" из "+entry.expectedUnits+" units.";
+    }
+  });
+  renderDiagnosticsPanel();
+}
+function finalizeDiagnostics(svgList){
+  const finalSet=new Set(collectPlacedUnitIds(svgList).unitIds);
+  diagnosticEntries().forEach(entry=>{
+    entry.finalUnitIds=entry.unitIds.filter(unitId=>finalSet.has(unitId));
+    const finalCount=entry.finalUnitIds.length;
+    if(finalCount>=entry.expectedUnits){
+      entry.status="placed";entry.stage="Финальный результат";entry.issue="Размещены все "+entry.expectedUnits+" nesting unit.";
+    }else if(!entry.staged){
+      entry.status="lost";entry.stage="Staging";entry.issue="Экземпляр не дошёл до Nesting.";
+    }else if(!entry.parsed||entry.unitIds.length<entry.expectedUnits){
+      entry.status="lost";entry.stage="SvgNest.parse/getParts";entry.issue="Потерян при построении nesting units: "+entry.unitIds.length+"/"+entry.expectedUnits+".";
+    }else if(entry.candidateUnitIds.length===0){
+      entry.status="lost";entry.stage="NFP / PlacementWorker";entry.issue="Экземпляр распознан, но ни один кандидат не разместил его.";
+    }else{
+      entry.status="lost";entry.stage="Выбор финального результата";entry.issue="Экземпляр встречался в кандидатах, но не вошёл в финальную раскладку.";
+    }
+  });
+  renderDiagnosticsPanel(true);
+}
+function renderDiagnosticsPanel(finalState=false){
+  const panel=$("diagnosticsPanel"),list=$("diagnosticsList"),summary=$("diagnosticsSummary");
+  if(!panel||!list||!summary)return;
+  const entries=diagnosticEntries();
+  if(!entries.length){panel.hidden=true;return}
+  panel.hidden=false;
+  const placed=entries.filter(e=>e.status==="placed").length;
+  const lost=entries.filter(e=>e.status==="lost"||e.status==="parser_error").length;
+  const candidate=entries.filter(e=>e.status==="candidate").length;
+  const totalUnits=entries.reduce((sum,e)=>sum+e.expectedUnits,0);
+  const finalUnits=entries.reduce((sum,e)=>sum+e.finalUnitIds.length,0);
+  summary.innerHTML="<span class='diagnostic-chip'><b>"+entries.length+"</b> instance</span><span class='diagnostic-chip ok'><b>"+placed+"</b> размещено</span><span class='diagnostic-chip bad'><b>"+lost+"</b> потеряно</span><span class='diagnostic-chip warn'><b>"+candidate+"</b> в кандидатах</span><span class='diagnostic-units'>Units: <b>"+finalUnits+"/"+totalUnits+"</b></span>";
+  list.innerHTML="";
+  entries.forEach(entry=>{
+    const row=document.createElement("article");row.className="diagnostic-row "+diagnosticStatusClass(entry);
+    const unitText=entry.unitIds.length?entry.unitIds.map(id=>"<code>"+escapeHtml(id)+"</code>").join(""):"<span class='diagnostic-muted'>unitId ещё не создан</span>";
+    const candidateText=entry.candidateUnitIds.length+"/"+entry.expectedUnits,finalText=entry.finalUnitIds.length+"/"+entry.expectedUnits;
+    row.innerHTML="<div class='diagnostic-state'><span></span><b>"+diagnosticStatusLabel(entry)+"</b></div><div class='diagnostic-main'><div class='diagnostic-title'><strong>"+escapeHtml(entry.instanceId)+"</strong><span>"+escapeHtml(entry.type)+" · "+escapeHtml(entry.name)+"</span></div><div class='diagnostic-stage'>Этап: <b>"+escapeHtml(diagnosticStageLabel(entry))+"</b></div><div class='diagnostic-meta'>parsed "+entry.unitIds.length+"/"+entry.expectedUnits+" · candidates "+candidateText+" · final "+finalText+"</div><div class='diagnostic-issue'>"+escapeHtml(entry.issue||"—")+"</div><div class='diagnostic-units'>"+unitText+"</div></div>";
+    list.appendChild(row);
+  });
+  const toggle=$("diagnosticsToggle");if(toggle)toggle.textContent=panel.classList.contains("collapsed")?"Развернуть":"Свернуть";
+  const statusLabel=$("diagnosticsStatus");if(statusLabel)statusLabel.textContent=finalState?"Итоговая проверка":"Живая трассировка";
+}
 function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",frame:0,isBest:false}){
   const wrap=$("canvasWrap");wrap.innerHTML="";
   const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:sheet.w,sheetH:sheet.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(efficiency||0),placed:Number(placed||0),total:Number(total||0),mode:view.mode,frame:view.frame,isBest:Boolean(view.isBest)};
