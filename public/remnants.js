@@ -421,7 +421,8 @@
       .remnant-layer-toggle.off{background:transparent;color:#7f8b83;border-color:#39423d}
       .remnant-legend{display:flex;align-items:center;gap:6px;color:#829188}.remnant-legend i{display:block;width:12px;height:12px;border-radius:3px;background:rgba(48,190,91,.22);border:2px solid #42d477}
       .remnant-result .sheet-svg{background:rgba(20,28,23,.18)}
-      .remnant-overlay{pointer-events:none}.remnant-overlay-shape{fill:rgba(48,190,91,.20);stroke:#42d477;stroke-width:2;vector-effect:non-scaling-stroke;stroke-dasharray:7 4}
+      .remnant-overlay{pointer-events:none}
+      .remnant-overlay-shape{fill:rgba(48,190,91,.16);fill-opacity:.16;stroke:#42d477;stroke-width:2;vector-effect:non-scaling-stroke;stroke-dasharray:7 4}
       .remnant-overlay-label{font-family:Arial,sans-serif;font-size:18px;font-weight:700;fill:#9af0b5;paint-order:stroke;stroke:#102116;stroke-width:5px;stroke-linejoin:round}
       .remnant-overlay-meta{font-family:Arial,sans-serif;font-size:12px;fill:#d1f5da;paint-order:stroke;stroke:#102116;stroke-width:4px;stroke-linejoin:round}
       .remnant-list{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}.remnant-chip{padding:6px 8px;border:1px solid #304237;border-radius:6px;background:rgba(255,255,255,.025);color:#aebbb2;font-size:10px}.remnant-chip b{color:#d7eadc}
@@ -619,6 +620,22 @@
       const ori=rcheck&&rcheck.business?(rcheck.orientation===90?" · 90°":" · 0°"):"";
       head.innerHTML="<strong>"+title+"</strong><span>"+(remnant?"Деловой остаток · "+dim+ori:"Новый металлический лист")+"</span>";
       const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
+
+      // Результаты на деловом остатке не проходят через decorateResultSvg(),
+      // поэтому исходный #sheet-bin мог остаться с дефолтной чёрной заливкой.
+      // Оформляем сам контур остатка без изменения его viewBox/координат.
+      if(remnant){
+        try{
+          const bin=clone.querySelector("#sheet-bin,.bin");
+          if(bin){
+            bin.setAttribute("fill","#b8c1ca");
+            bin.setAttribute("fill-opacity","0.72");
+            bin.setAttribute("stroke","#687481");
+            bin.setAttribute("stroke-width","0.9");
+            bin.setAttribute("vector-effect","non-scaling-stroke");
+          }
+        }catch(err){console.warn("SheetNest: remnant base styling skipped",err)}
+      }
 
       const freePolys=actualFreePolygonsFromSvg(clone);
       const comparison=remnant?compareRemnantToFree(clone,remnant,freePolys):null;
