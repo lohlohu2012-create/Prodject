@@ -347,7 +347,13 @@
       if(newResults.length)generated.push(...capture(newResults,meta));
       for(const used of usedResults){
         const child=capture(used.results,meta);
-        child.forEach(x=>x.parentRemnantId=used.remnant.id);
+        const storedAfterCapture=load();
+        child.forEach(x=>{
+          x.parentRemnantId=used.remnant.id;
+          const savedChild=storedAfterCapture.find(y=>y.id===x.id);
+          if(savedChild)savedChild.parentRemnantId=used.remnant.id;
+        });
+        if(child.length)save(storedAfterCapture);
         generated.push(...child);
         used.remnant.status="consumed";
       }
