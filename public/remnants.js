@@ -129,11 +129,15 @@
       if(!sheetPoly)return[];
       let free=[sheetPoly];
       const occupied=[];
-      root.querySelectorAll("[data-sheetnest-unit-id]").forEach(el=>{
-        if(el===bin)return;
+      // Для разности нужны именно геометрические группы деталей.
+      // Не считаем сам #sheet-bin занятой областью и не создаём остаток,
+      // если движок не передал ни одной детали.
+      root.querySelectorAll("g[data-sheetnest-unit-id],path[data-sheetnest-unit-id],[data-sheetnest-unit-id]").forEach(el=>{
+        if(el===bin||el.closest("#sheet-bin")===bin)return;
         const p=polygonifyElement(el);
         if(p)occupied.push(p);
       });
+      if(!occupied.length)return[];
       for(const p of occupied){
         free=free.flatMap(f=>clipDifference([f],[p]));
         if(!free.length)break;
@@ -154,11 +158,12 @@
       if(!sheetPoly)return[];
       let free=[sheetPoly];
       const occupied=[];
-      root.querySelectorAll("[data-sheetnest-unit-id]").forEach(el=>{
-        if(el===bin)return;
+      root.querySelectorAll("g[data-sheetnest-unit-id],path[data-sheetnest-unit-id],[data-sheetnest-unit-id]").forEach(el=>{
+        if(el===bin||el.closest("#sheet-bin")===bin)return;
         const p=polygonifyElement(el);
         if(p)occupied.push(p);
       });
+      if(!occupied.length)return[];
       for(const p of occupied){
         free=free.flatMap(f=>clipDifference([f],[p]));
         if(!free.length)break;
@@ -243,8 +248,17 @@
       const items=load(),created=[];
       (Array.isArray(results)?results:[]).forEach((svg,si)=>{
         try{
+          const sheetPoly=(()=>{
+            try{
+              const bin=svg?.querySelector("#sheet-bin,.bin");
+              return bin?polygonifyElement(bin):null;
+            }catch(_){return null}
+          })();
+          const sheetArea=sheetPoly?area(sheetPoly):0;
           for(const poly0 of freePolygonsFromSvg(svg)){
-            const b=bounds(poly0);
+            const b=bounds(poly0),polyArea=area(poly0);
+            // Защита от сохранения всего исходного листа как "делового остатка".
+            if(sheetArea>0 && polyArea/sheetArea>=0.995)continue;
             if(!Number.isFinite(b.width)||!Number.isFinite(b.height)||b.width<minStore||b.height<minStore)continue;
             const item={
               id:"REM-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),
@@ -422,7 +436,7 @@
       .remnant-legend{display:flex;align-items:center;gap:6px;color:#829188}.remnant-legend i{display:block;width:12px;height:12px;border-radius:3px;background:rgba(48,190,91,.22);border:2px solid #42d477}
       .remnant-result .sheet-svg{background:rgba(20,28,23,.18)}
       .remnant-overlay{pointer-events:none}
-      .remnant-overlay-shape{fill:rgba(48,190,91,.16);fill-opacity:.16;stroke:#42d477;stroke-width:2;vector-effect:non-scaling-stroke;stroke-dasharray:7 4}
+      .remnant-overlay-shape{fill:rgba(48,190,91,.30);fill-opacity:.30;stroke:#42d477;stroke-width:2;vector-effect:non-scaling-stroke;stroke-dasharray:7 4}
       .remnant-overlay-label{font-family:Arial,sans-serif;font-size:18px;font-weight:700;fill:#9af0b5;paint-order:stroke;stroke:#102116;stroke-width:5px;stroke-linejoin:round}
       .remnant-overlay-meta{font-family:Arial,sans-serif;font-size:12px;fill:#d1f5da;paint-order:stroke;stroke:#102116;stroke-width:4px;stroke-linejoin:round}
       .remnant-list{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}.remnant-chip{padding:6px 8px;border:1px solid #304237;border-radius:6px;background:rgba(255,255,255,.025);color:#aebbb2;font-size:10px}.remnant-chip b{color:#d7eadc}
@@ -460,16 +474,16 @@
          !Number.isFinite(binBounds.width)||!Number.isFinite(binBounds.height)||
          srcBounds.width<=0||srcBounds.height<=0||binBounds.width<=0||binBounds.height<=0)return null;
 
-      const scaleX=binBounds.width/srcBounds.width;
-      const scaleY=binBounds.height/srcBounds.height;
+      // Визуализируем фактическую геометрию #sheet-bin, которая была
+      // реально передана в текущий этап раскроя. Это исключает растяжение
+      // нормализованного сохранённого полигона по габаритам листа.
       const ns="http://www.w3.org/2000/svg";
       const g=document.createElementNS(ns,"g");
       g.classList.add("remnant-overlay");
       g.setAttribute("data-remnant-overlay",String(remnant.id||index));
 
-      const points=remnant.polygon.map(p=>{
-        const x=binBounds.minX+(Number(p.x)-srcBounds.minX)*scaleX;
-        const y=binBounds.minY+(Number(p.y)-srcBounds.minY)*scaleY;
+      const points=binPoly.map(p=>{
+        const x=Number(p.x),y=Number(p.y);
         return Number.isFinite(x)&&Number.isFinite(y)?x+","+y:null;
       }).filter(Boolean).join(" ");
       if(!points)return null;
