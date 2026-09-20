@@ -779,7 +779,11 @@ function updateProgress(){
 function startOneRun(sheet,runDurationMs,runId){
   resetEngine();
   const expectedTotal=state.expectedPartCount||requestedPartCount();
-  const parsed=SvgNest.parsesvg(buildNestingSvg(sheet.w,sheet.h)),bin=parsed.querySelector("#sheet-bin");
+  const nestingSvg=buildNestingSvg(sheet.w,sheet.h);
+  markDiagnosticsStaged(nestingSvg);
+  const parsed=SvgNest.parsesvg(nestingSvg);
+  registerParsedUnits(parsed);
+  const bin=parsed.querySelector("#sheet-bin");
   if(!bin)throw new Error("Не удалось создать металлический лист.");
   SvgNest.setbin(bin);
   let runBest=null;
@@ -791,6 +795,7 @@ function startOneRun(sheet,runDurationMs,runId){
       state.searchFrames++;
       const validation=validateNestingResult(svglist,placed,expectedTotal);
       state.lastValidation=validation;
+       updateDiagnosticsFromCandidate(svglist,isBest,frame,validation);
       const shownPlaced=validation.unique;
       if(isBest&&validation.valid){
         state.bestFrames++;
@@ -837,6 +842,7 @@ async function runSearch(){
   state.nestingManifest=createNestingManifest();
   state.expectedPartCount=requestedPartCount();
   state.lastValidation=null;
+   initializeInstanceDiagnostics();
   $("nestButton").disabled=true;$("stopButton").disabled=false;$("downloadButton").disabled=true;status("Расчёт...");
   state.running=true;state.resultSvgs=[];state.resultMeta=null;state.bestResultSvgs=[];state.bestResultMeta=null;state.searchFrames=0;state.bestFrames=0;state.durationMs=q.seconds*1000/orientations.length;$("progressBar").style.width="0%";
   let bestOverall=null;
@@ -879,6 +885,7 @@ async function runSearch(){
     state.bestResultMeta=meta;
     state.resultMeta=meta;
     renderResults(bestOverall.results,bestOverall.efficiency,bestOverall.placed,bestOverall.total,bestOverall.sheet,{mode:"final",frame:bestOverall.frame,isBest:complete});
+     finalizeDiagnostics(bestOverall.results);
     if(complete){
       $("runInfo").textContent="Готово · "+bestOverall.results.length+" лист(ов) · "+bestOverall.placed+"/"+state.expectedPartCount+" деталей · "+Math.round(bestOverall.efficiency*100)+"% заполнение · просмотрено "+state.searchFrames+" вариантов";
       status("Раскрой рассчитан");
