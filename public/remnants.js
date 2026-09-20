@@ -341,47 +341,66 @@
   function remnantOverlayGroup(svg,remnant,index){
     try{
       if(!svg||!remnant||!Array.isArray(remnant.polygon)||remnant.polygon.length<3)return null;
-      const sourceBounds=bounds(remnant.polygon);
-      if(!Number.isFinite(sourceBounds.width)||!Number.isFinite(sourceBounds.height)||sourceBounds.width<=0||sourceBounds.height<=0)return null;
-      const rawViewBox=(svg.getAttribute("viewBox")||"").trim().split(/[ ,]+/).map(Number);
-      const vb=rawViewBox.length===4&&rawViewBox.every(Number.isFinite)
-        ? {x:rawViewBox[0],y:rawViewBox[1],width:Math.max(1,rawViewBox[2]),height:Math.max(1,rawViewBox[3])}
-        : {x:0,y:0,width:Math.max(1,sourceBounds.width),height:Math.max(1,sourceBounds.height)};
-      const scaleX=vb.width/Math.max(sourceBounds.width,1);
-      const scaleY=vb.height/Math.max(sourceBounds.height,1);
+
+      // A stored business remnant is normalized by capture() to its own
+      // bounding box. runBin()/buildBinSvg() uses exactly the same polygon
+      // as the bin and normalizes it the same way. Therefore the overlay
+      // must be mapped to the actual #sheet-bin geometry, NOT to the whole
+      // SVG viewBox. Mapping to the viewBox was the source of visible
+      // stretching/offsets on non-rectangular remnants.
+      const bin=svg.querySelector("#sheet-bin,.bin");
+      const binPoly=bin?polygonifyElement(bin):null;
+      if(!binPoly||binPoly.length<3)return null;
+
+      const srcBounds=bounds(remnant.polygon);
+      const binBounds=bounds(binPoly);
+      if(!Number.isFinite(srcBounds.width)||!Number.isFinite(srcBounds.height)||
+         !Number.isFinite(binBounds.width)||!Number.isFinite(binBounds.height)||
+         srcBounds.width<=0||srcBounds.height<=0||binBounds.width<=0||binBounds.height<=0)return null;
+
+      const scaleX=binBounds.width/srcBounds.width;
+      const scaleY=binBounds.height/srcBounds.height;
       const ns="http://www.w3.org/2000/svg";
       const g=document.createElementNS(ns,"g");
       g.classList.add("remnant-overlay");
       g.setAttribute("data-remnant-overlay",String(remnant.id||index));
+
       const points=remnant.polygon.map(p=>{
-        const x=vb.x+(Number(p.x)-sourceBounds.minX)*scaleX;
-        const y=vb.y+(Number(p.y)-sourceBounds.minY)*scaleY;
+        const x=binBounds.minX+(Number(p.x)-srcBounds.minX)*scaleX;
+        const y=binBounds.minY+(Number(p.y)-srcBounds.minY)*scaleY;
         return Number.isFinite(x)&&Number.isFinite(y)?x+","+y:null;
       }).filter(Boolean).join(" ");
       if(!points)return null;
+
       const shape=document.createElementNS(ns,"polygon");
       shape.setAttribute("points",points);
       shape.classList.add("remnant-overlay-shape");
       g.appendChild(shape);
-      let orientation=Number(remnant.orientation);
-      if(orientation!==90)orientation=0;
+
+      let orientation=0;
       try{
         const fit=classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),Number(document.getElementById("gap")?.value||2));
         if(fit&&fit.business)orientation=fit.orientation===90?90:0;
       }catch(_){}
-      const cx=vb.x+vb.width/2,cy=vb.y+vb.height/2;
+
+      const cx=binBounds.minX+binBounds.width/2;
+      const cy=binBounds.minY+binBounds.height/2;
       const label=document.createElementNS(ns,"text");
-      label.setAttribute("x",cx);label.setAttribute("y",cy-8);label.setAttribute("text-anchor","middle");
+      label.setAttribute("x",cx);label.setAttribute("y",cy-8);
+      label.setAttribute("text-anchor","middle");
       label.classList.add("remnant-overlay-label");
       label.textContent=String(remnant.displayId||("REM-"+String(index+1).padStart(3,"0")));
       g.appendChild(label);
+
       const meta=document.createElementNS(ns,"text");
-      meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);meta.setAttribute("text-anchor","middle");
+      meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);
+      meta.setAttribute("text-anchor","middle");
       meta.classList.add("remnant-overlay-meta");
-      meta.textContent=Math.round(sourceBounds.width)+" × "+Math.round(sourceBounds.height)+" мм · "+(orientation===90?"90°":"0°");
+      meta.textContent=Math.round(srcBounds.width)+" × "+Math.round(srcBounds.height)+" мм · "+(orientation===90?"90°":"0°");
       g.appendChild(meta);
       return g;
-    }catch(_){
+    }catch(err){
+      console.warn("SheetNest: business remnant overlay skipped",err);
       return null;
     }
   }
