@@ -445,7 +445,7 @@
     });
     $("statSheets").textContent=safeRemnantResults.reduce((n,x)=>n+x.results.length,0)+safeNewResults.length;
     $("statParts").textContent=placed;$("statEfficiency").textContent=total?Math.round(placed/total*100)+"%":"0%";
-    applyCanvasZoom();
+    try{applyCanvasZoom()}catch(err){console.warn("SheetNest: canvas zoom update skipped",err)}
   }
 
   function renderLiveCandidate(svgList,efficiency,placed,total,label,isBest){
@@ -465,7 +465,7 @@
     $("statSheets").textContent=svgList.length;
     $("statParts").textContent=Number(placed||0);
     $("statEfficiency").textContent=Math.round(Number(efficiency||0)*100)+"%";
-    applyCanvasZoom();
+    try{applyCanvasZoom()}catch(err){console.warn("SheetNest: live canvas zoom update skipped",err)}
   }
 
   async function mixedRunCore(){
@@ -585,8 +585,10 @@
       else if(e.stage==="Деловой остаток"||e.stage==="Новый лист"){e.status="lost";e.issue="Деталь проверена в смешанном раскрое, но не вошла в финальный результат."}
       else{e.status="lost";e.stage="Смешанный раскрой";e.issue="Не размещена."}
     });
-    renderMixed(usedResults,newResults,meta,placed,total);
-    window.SheetNestDxf?.update?.();
+    try{renderMixed(usedResults,newResults,meta,placed,total)}
+    catch(err){console.warn("SheetNest: final remnant visualization skipped; nesting result is preserved",err)}
+    try{window.SheetNestDxf?.update?.()}
+    catch(err){console.warn("SheetNest: DXF preview update skipped",err)} 
     renderDiagnosticsPanel(true);
     $("progressBar").style.width="100%";
     $("runInfo").textContent=remaining.size?"Частичный смешанный раскрой · не размещено: "+remaining.size:"Готово · деловые остатки: "+usedResults.length+" · новых листов: "+newResults.length+" · размещено: "+placed+"/"+total;
