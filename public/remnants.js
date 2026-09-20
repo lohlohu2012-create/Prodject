@@ -447,10 +447,9 @@
       const l=num("remnantMinLength",500),w=num("remnantMinWidth",300),h=document.getElementById("remnantHint");
       if(h)h.textContent="Проверяются обе ориентации: "+l+"×"+w+" и "+w+"×"+l+" мм.";
     }));
-    const original=window.runSearch;
-    if(typeof original!=="function")return;
-    try{runSearch=mixedRun}catch(_){window.runSearch=mixedRun;}
-    $("nestButton")?.addEventListener("click",()=>{});
+    // app.js calls the public runner explicitly; do not overwrite a lexical runSearch binding here.
+    // Keeping the integration on the public API also avoids a ReferenceError in strict mode.
+
   }
   init();
   window.SheetNestRemnants={load,save,classify,capture,freePolygonsFromSvg,run:mixedRun,renderMixed};
