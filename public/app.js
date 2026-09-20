@@ -1,4 +1,4 @@
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -569,7 +569,7 @@ function updateProgress(){
   $("runInfo").textContent=`Перебираем раскладки · кадр ${state.searchFrames} · осталось ${Math.max(0,Math.ceil((state.durationMs-elapsed)/1000))} с`;
 }
 
-function startOneRun(sheet,runDurationMs){
+function startOneRun(sheet,runDurationMs,runId){
   resetEngine();
   const expectedTotal=state.expectedPartCount||requestedPartCount();
   const parsed=SvgNest.parsesvg(buildNestingSvg(sheet.w,sheet.h)),bin=parsed.querySelector("#sheet-bin");
@@ -579,6 +579,7 @@ function startOneRun(sheet,runDurationMs){
   SvgNest.start(
     progress=>{if(state.running)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`;},
     (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
+      if(!state.running||runId!==state.runId)return;
       if(!svglist||!svglist.length)return;
       state.searchFrames++;
       const validation=validateNestingResult(svglist,placed,expectedTotal);
@@ -624,6 +625,8 @@ async function runSearch(){
   if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
   if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
   const sheet=getSheet(),q=qualityConfig(),orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
+  state.runId+=1;
+  const runId=state.runId;
   state.nestingManifest=createNestingManifest();
   state.expectedPartCount=requestedPartCount();
   state.lastValidation=null;
@@ -633,7 +636,7 @@ async function runSearch(){
   for(const candidate of orientations){
     if(!state.running)break;
     state.startedAt=Date.now();
-    const runBest=await startOneRun(candidate,state.durationMs);
+    const runBest=await startOneRun(candidate,state.durationMs,runId);
     if(runBest){
       const current={
         results:runBest.results,
@@ -714,7 +717,7 @@ $("fileInput").addEventListener("change",async event=>{
   event.target.value="";
 });
 $("nestButton").addEventListener("click",()=>runSearch().catch(err=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;status("Ошибка");alert(err.message)}));
-$("stopButton").addEventListener("click",()=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;$("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант.";status("Остановлено");$("progressBar").style.width="100%"});
+$("stopButton").addEventListener("click",()=>{state.runId+=1;state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;$("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант.";status("Остановлено");$("progressBar").style.width="100%"});
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);decorateResultSvg(clone,state.resultMeta,index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
