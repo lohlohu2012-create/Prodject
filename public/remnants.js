@@ -279,10 +279,60 @@
     });
   }
 
+  function ensureRemnantStyles(){
+    if(document.getElementById("sheetnest-remnant-overlay-style"))return;
+    const style=document.createElement("style");style.id="sheetnest-remnant-overlay-style";
+    style.textContent=`
+      .remnant-layer-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:10px 12px;border:1px solid #263a2d;border-radius:9px;background:rgba(44,126,73,.08);color:#b8c9bd;font-size:11px}
+      .remnant-layer-left{display:flex;align-items:center;gap:10px}.remnant-layer-left strong{color:#d7e7db}.remnant-layer-left span{color:#7f9485}
+      .remnant-layer-toggle{border:1px solid #3e7650;background:#183021;color:#bfe8c9;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:11px}
+      .remnant-layer-toggle.off{background:transparent;color:#7f8b83;border-color:#39423d}
+      .remnant-legend{display:flex;align-items:center;gap:6px;color:#829188}.remnant-legend i{display:block;width:12px;height:12px;border-radius:3px;background:rgba(48,190,91,.22);border:2px solid #42d477}
+      .remnant-result .sheet-svg{background:rgba(20,28,23,.18)}
+      .remnant-overlay{pointer-events:none}.remnant-overlay-shape{fill:rgba(48,190,91,.20);stroke:#42d477;stroke-width:2;vector-effect:non-scaling-stroke;stroke-dasharray:7 4}
+      .remnant-overlay-label{font-family:Arial,sans-serif;font-size:18px;font-weight:700;fill:#9af0b5;paint-order:stroke;stroke:#102116;stroke-width:5px;stroke-linejoin:round}
+      .remnant-overlay-meta{font-family:Arial,sans-serif;font-size:12px;fill:#d1f5da;paint-order:stroke;stroke:#102116;stroke-width:4px;stroke-linejoin:round}
+      .remnant-list{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}.remnant-chip{padding:6px 8px;border:1px solid #304237;border-radius:6px;background:rgba(255,255,255,.025);color:#aebbb2;font-size:10px}.remnant-chip b{color:#d7eadc}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function remnantOverlayGroup(svg,remnant,index){
+    if(!svg||!remnant||!Array.isArray(remnant.polygon)||remnant.polygon.length<3)return null;
+    const b=bounds(remnant.polygon);if(!Number.isFinite(b.width)||!Number.isFinite(b.height))return null;
+    const vb=(svg.getAttribute("viewBox")||"0 0 "+b.width+" "+b.height).split(/[ ,]+/).map(Number);
+    const ox=Number.isFinite(vb[0])?vb[0]:0,oy=Number.isFinite(vb[1])?vb[1]:0;
+    const ns="http://www.w3.org/2000/svg",g=document.createElementNS(ns,"g");g.classList.add("remnant-overlay");g.setAttribute("data-remnant-overlay",remnant.id||String(index));
+    const points=remnant.polygon.map(p=>(p.x-b.minX+ox)+","+(p.y-b.minY+oy)).join(" ");
+    const shape=document.createElementNS(ns,"polygon");shape.setAttribute("points",points);shape.classList.add("remnant-overlay-shape");g.appendChild(shape);
+    const fit=classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),Number(document.getElementById("gap")?.value||2));
+    const cx=b.minX+(b.width/2)+ox,cy=b.minY+(b.height/2)+oy;
+    const label=document.createElementNS(ns,"text");label.setAttribute("x",cx);label.setAttribute("y",cy-8);label.setAttribute("text-anchor","middle");label.classList.add("remnant-overlay-label");label.textContent=remnant.displayId||("REM-"+String(index+1).padStart(3,"0"));g.appendChild(label);
+    const meta=document.createElementNS(ns,"text");meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);meta.setAttribute("text-anchor","middle");meta.classList.add("remnant-overlay-meta");meta.textContent=Math.round(b.width)+" × "+Math.round(b.height)+" мм · "+(fit.orientation===90?"90°":"0°");g.appendChild(meta);
+    return g;
+  }
+
+  function addRemnantLayerControls(wrap,remnants){
+    ensureRemnantStyles();
+    const tools=document.createElement("div");tools.className="remnant-layer-tools";
+    const left=document.createElement("div");left.className="remnant-layer-left";
+    left.innerHTML="<strong>Слой деловых остатков</strong><span>Реальная геометрия · размеры · ориентация</span>";
+    const legend=document.createElement("div");legend.className="remnant-legend";legend.innerHTML="<i></i><span>Деловой остаток</span>";
+    const toggle=document.createElement("button");toggle.type="button";toggle.className="remnant-layer-toggle";toggle.textContent="Скрыть слой";
+    toggle.addEventListener("click",()=>{const hidden=wrap.classList.toggle("remnant-layer-hidden");wrap.querySelectorAll(".remnant-overlay").forEach(g=>g.style.display=hidden?"none":"");toggle.classList.toggle("off",hidden);toggle.textContent=hidden?"Показать слой":"Скрыть слой"});
+    const right=document.createElement("div");right.style.display="flex";right.style.alignItems="center";right.style.gap="12px";right.appendChild(legend);right.appendChild(toggle);
+    tools.appendChild(left);tools.appendChild(right);wrap.appendChild(tools);
+    const list=document.createElement("div");list.className="remnant-list";
+    remnants.forEach((rem,i)=>{const b=bounds(rem.polygon||[]),chip=document.createElement("div");chip.className="remnant-chip";chip.innerHTML="<b>"+(rem.displayId||("REM-"+String(i+1).padStart(3,"0")))+"</b> · "+Math.round(b.width)+" × "+Math.round(b.height)+" мм";list.appendChild(chip)});
+    if(remnants.length)wrap.appendChild(list);
+  }
+
   function renderMixed(remnantResults,newResults,meta,placed,total){
     state.remnantResultSvgs=remnantResults.flatMap(x=>x.results||[]);
-    const wrap=$("canvasWrap");wrap.innerHTML="";
-    const addCard=(svg,title,remnant)=>{
+    const wrap=$(\"canvasWrap\");wrap.innerHTML=\"\";
+    const visibleRemnants=remnantResults.map((x,i)=>{const r={...(x.remnant||{})};r.displayId="REM-"+String(i+1).padStart(3,"0");return r});
+    if(visibleRemnants.length)addRemnantLayerControls(wrap,visibleRemnants);
+    const addCard=(svg,title,remnant,remnantIndex)=>{
       const card=document.createElement("div");card.className="result-card"+(remnant?" remnant-result":"");
       const head=document.createElement("div");head.className="result-title";
       const rb=remnant&&remnant.polygon?bounds(remnant.polygon):null;
@@ -291,14 +341,15 @@
       const ori=rcheck&&rcheck.business?(rcheck.orientation===90?" · 90°":" · 0°"):"";
       head.innerHTML="<strong>"+title+"</strong><span>"+(remnant?"Деловой остаток · "+dim+ori:"Новый металлический лист")+"</span>";
       const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
-      if(!remnant)decorateResultSvg(clone,meta,wrap.children.length);
+      if(remnant){const overlay=remnantOverlayGroup(clone,remnant,remnantIndex);if(overlay)clone.appendChild(overlay)}else decorateResultSvg(clone,meta,wrap.children.length);
       card.appendChild(head);card.appendChild(clone);
       const summary=document.createElement("div");summary.className="sheet-summary";
       summary.innerHTML="<span>"+(remnant?"Реальная геометрия остатка":"Новый лист")+" · зазор: <strong>"+meta.gap+" мм</strong></span>"+(remnant&&rcheck?'<span class="remnant-fit-badge">Минимум '+num("remnantMinLength",500)+" × "+num("remnantMinWidth",300)+" · "+(rcheck.business?"проходит":"не проходит")+"</span>":"");
       card.appendChild(summary);wrap.appendChild(card);
     };
-    remnantResults.forEach((x,i)=>x.results.forEach((svg,j)=>addCard(svg,"Остаток "+(i+1)+" · раскрой "+(j+1),true)));
-    newResults.forEach((svg,i)=>addCard(svg,"Новый лист "+(i+1),false));
+    let remIndex=0;
+    remnantResults.forEach((x,i)=>x.results.forEach((svg,j)=>{addCard(svg,""+(visibleRemnants[i]?.displayId||("REM-"+String(i+1).padStart(3,"0")))+" · раскрой "+(j+1),visibleRemnants[i],remIndex++); }));
+    newResults.forEach((svg,i)=>addCard(svg,"Новый лист "+(i+1),null,-1));
     $("statSheets").textContent=remnantResults.reduce((n,x)=>n+x.results.length,0)+newResults.length;
     $("statParts").textContent=placed;$("statEfficiency").textContent=total?Math.round(placed/total*100)+"%":"0%";
     applyCanvasZoom();
