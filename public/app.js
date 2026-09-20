@@ -916,7 +916,6 @@ async function runSearch(){
     $("runInfo").textContent="Допустимую раскладку не удалось найти.";
     status("Нет результата");
   }
-  }
 }
 
 $("fileInput").addEventListener("change",async event=>{
