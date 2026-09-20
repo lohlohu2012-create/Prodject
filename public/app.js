@@ -171,27 +171,45 @@ function setupShapeLibrary(){
   renderSelectedShapes();
 }
 
-function appendCustomParts(root){
-  const ns="http://www.w3.org/2000/svg";
+function appendCustomParts(root,stage){
   for(const part of state.customParts){
-    const elements=sourceElements(part.svgText),repeat=Math.max(1,Math.floor(part.quantity||1));
+    const elements=sourceElements(part.svgText),repeat=normalizedQuantity(part),bounds=estimateSvgBounds(part.svgText);
     for(let copy=0;copy<repeat;copy++){
-      for(const element of elements){const clone=element.cloneNode(true);clone.removeAttribute("id");clone.setAttribute("data-sheetnest-source",part.id);root.appendChild(clone)}
+      const instanceId=part.id+"#"+(copy+1);
+      appendStagedInstance(root,elements,bounds,instanceId,part.id,stage.nextX,stage.nextY);
+      stage.nextX+=bounds.width+stage.gap;
+      stage.rowHeight=Math.max(stage.rowHeight,bounds.height);
+      if(stage.nextX>stage.maxWidth){
+        stage.nextX=0;
+        stage.nextY+=stage.rowHeight+stage.gap;
+        stage.rowHeight=0;
+      }
     }
   }
 }
 
-function appendLibraryParts(root){
-  const ns="http://www.w3.org/2000/svg";
+function appendLibraryParts(root,stage){
   for(const part of state.libraryParts){
     const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
     if(!shape)continue;
     const d=shapePath(shape);
-    for(let copy=0;copy<Math.max(1,Math.floor(part.quantity));copy++){
-      const group=document.createElementNS(ns,"g");group.setAttribute("data-sheetnest-shape",shape.id);
+    const bounds={minX:0,minY:0,width:Math.max(1,shape.w),height:Math.max(1,shape.h)};
+    for(let copy=0;copy<normalizedQuantity(part);copy++){
+      const instanceId="library-"+shape.id+"#"+(copy+1);
+      const ns="http://www.w3.org/2000/svg",group=document.createElementNS(ns,"g");
+      group.setAttribute("data-sheetnest-stage-instance",instanceId);
+      group.setAttribute("transform","translate("+stage.nextX+" "+stage.nextY+")");
       const path=document.createElementNS(ns,"path");
       path.setAttribute("d",d);path.setAttribute("fill","none");path.setAttribute("stroke","black");path.setAttribute("stroke-width",".2");
+      stampNestingSource(path,instanceId,shape.id);
       group.appendChild(path);root.appendChild(group);
+      stage.nextX+=bounds.width+stage.gap;
+      stage.rowHeight=Math.max(stage.rowHeight,bounds.height);
+      if(stage.nextX>stage.maxWidth){
+        stage.nextX=0;
+        stage.nextY+=stage.rowHeight+stage.gap;
+        stage.rowHeight=0;
+      }
     }
   }
 }
@@ -350,9 +368,10 @@ function buildNestingSvg(w,h){
   const margin=Math.max(0,readNumber("margin",10)),innerW=w-2*margin,innerH=h-2*margin;
   if(innerW<=0||innerH<=0)throw new Error("Поле от края больше размера металлического листа.");
   const ns="http://www.w3.org/2000/svg",root=document.createElementNS(ns,"svg");
-  root.setAttribute("xmlns",ns);root.setAttribute("viewBox",`0 0 ${innerW} ${innerH}`);root.setAttribute("width",String(innerW));root.setAttribute("height",String(innerH));
+  root.setAttribute("xmlns",ns);root.setAttribute("viewBox","0 0 "+innerW+" "+innerH);root.setAttribute("width",String(innerW));root.setAttribute("height",String(innerH));
   const bin=document.createElementNS(ns,"rect");bin.setAttribute("id","sheet-bin");bin.setAttribute("x","0");bin.setAttribute("y","0");bin.setAttribute("width",String(innerW));bin.setAttribute("height",String(innerH));root.appendChild(bin);
-  appendCustomParts(root);appendLibraryParts(root);
+  const stage={nextX:0,nextY:0,rowHeight:0,gap:Math.max(50,readNumber("gap",2)*20),maxWidth:Math.max(10000,innerW*20,100000)};
+  appendCustomParts(root,stage);appendLibraryParts(root,stage);
   return new XMLSerializer().serializeToString(root);
 }
 function resetEngine(){
