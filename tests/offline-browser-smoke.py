@@ -223,6 +223,18 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         diagnostic_ok_status = eval_js("Array.from(document.querySelectorAll('#diagnosticsList .diagnostic-row')).every(row => row.classList.contains('ok'))")
         if diagnostic_count != 3 or diagnostic_bad != 0 or diagnostic_panel_hidden or not diagnostic_ok_status:
             raise RuntimeError(f"Instance diagnostics mismatch: rows={diagnostic_count}, bad={diagnostic_bad}, hidden={diagnostic_panel_hidden}, all_ok={diagnostic_ok_status}")
+        assert eval_js("typeof diagnosticsSnapshot === 'function'")
+        assert eval_js("typeof diagnosticsCsv === 'function'")
+        assert eval_js("document.getElementById('diagnosticsExportJson').disabled") is False
+        assert eval_js("document.getElementById('diagnosticsExportCsv').disabled") is False
+        diagnostics_snapshot = eval_js("diagnosticsSnapshot()")
+        if diagnostics_snapshot["summary"]["instances"] != 3 or diagnostics_snapshot["summary"]["finalUnits"] != 3:
+            raise RuntimeError(f"Diagnostics export summary mismatch: {diagnostics_snapshot!r}")
+        if any(not entry["instanceId"] or not entry["unitIds"] for entry in diagnostics_snapshot["entries"]):
+            raise RuntimeError(f"Diagnostics export lost instance/unit linkage: {diagnostics_snapshot!r}")
+        csv_header = eval_js("diagnosticsCsv(diagnosticsSnapshot()).split('\\n')[0]")
+        if "instanceId" not in csv_header or "failureStage" not in csv_header or "unitIds" not in csv_header:
+            raise RuntimeError(f"Diagnostics CSV header mismatch: {csv_header!r}")
         if int(frames) < 1:
             raise RuntimeError(f"Live nesting preview did not receive candidate frames: frames={frames}")
 
