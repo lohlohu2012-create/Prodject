@@ -859,5 +859,14 @@ $("nestButton").addEventListener("click",()=>runSearch().catch(err=>{state.runni
 $("stopButton").addEventListener("click",()=>{state.runId+=1;state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;$("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант.";status("Остановлено");$("progressBar").style.width="100%"});
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);decorateResultSvg(clone,state.resultMeta,index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 
+function setupDiagnosticsPanel(){
+  const panel=$("diagnosticsPanel"),toggle=$("diagnosticsToggle");
+  if(!panel||!toggle)return;
+  toggle.addEventListener("click",()=>{
+    panel.classList.toggle("collapsed");
+    toggle.textContent=panel.classList.contains("collapsed")?"Развернуть":"Свернуть";
+  });
+}
+setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
 setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
