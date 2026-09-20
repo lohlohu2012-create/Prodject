@@ -342,7 +342,21 @@
     const meta={material:document.getElementById("material").value,thickness:num("thickness",3),sheetW:getSheet().w,sheetH:getSheet().h,margin:num("margin",10),gap,efficiency:total?placed/total:0,placed,total};
     state.resultSvgs=newResults;state.bestResultSvgs=newResults;state.resultMeta=meta;state.bestResultMeta=meta;
     const allRaw=usedResults.flatMap(x=>x.results).concat(newResults);
-    if(enabled("saveRemnants",true)&&newResults.length)capture(newResults,meta);
+    if(enabled("saveRemnants",true)){
+      const generated=[];
+      if(newResults.length)generated.push(...capture(newResults,meta));
+      for(const used of usedResults){
+        const child=capture(used.results,meta);
+        child.forEach(x=>x.parentRemnantId=used.remnant.id);
+        generated.push(...child);
+        used.remnant.status="consumed";
+      }
+      if(usedResults.length){
+        const stored=load();
+        usedResults.forEach(used=>{const item=stored.find(x=>x.id===used.remnant.id);if(item)item.status="consumed"});
+        save(stored);
+      }
+    }
     const finalPlacedIds=new Set();
     allRaw.forEach(svg=>svg.querySelectorAll("[data-sheetnest-unit-id]").forEach(el=>{
       const uid=el.getAttribute("data-sheetnest-unit-id"),iid=state.unitToInstance[uid];if(iid)finalPlacedIds.add(uid);
@@ -371,7 +385,7 @@
     }));
     const original=window.runSearch;
     if(typeof original!=="function")return;
-    window.runSearch=mixedRun;
+    try{runSearch=mixedRun}catch(_){window.runSearch=mixedRun;}
     $("nestButton")?.addEventListener("click",()=>{});
   }
   init();
