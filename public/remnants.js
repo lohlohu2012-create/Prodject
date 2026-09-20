@@ -410,10 +410,12 @@
   }
 
   function renderMixed(remnantResults,newResults,meta,placed,total){
-    state.remnantResultSvgs=remnantResults.flatMap(x=>x.results||[]);
+    state.remnantResultSvgs=Array.isArray(remnantResults)?remnantResults.flatMap(x=>Array.isArray(x?.results)?x.results:[]):[];
     const wrap=$("canvasWrap");wrap.innerHTML="";
-    const visibleRemnants=remnantResults.map((x,i)=>{const r={...(x.remnant||{})};r.displayId="REM-"+String(i+1).padStart(3,"0");return r});
-    if(visibleRemnants.length)addRemnantLayerControls(wrap,visibleRemnants);
+    const safeRemnantResults=Array.isArray(remnantResults)?remnantResults.filter(x=>x&&Array.isArray(x.results)):[]; 
+    const safeNewResults=Array.isArray(newResults)?newResults.filter(Boolean):[];
+    const visibleRemnants=safeRemnantResults.map((x,i)=>{const r={...(x.remnant||{})};r.displayId="REM-"+String(i+1).padStart(3,"0");return r});
+    if(visibleRemnants.length){try{addRemnantLayerControls(wrap,visibleRemnants)}catch(err){console.warn("SheetNest: remnant controls skipped",err)}}
     const addCard=(svg,title,remnant,remnantIndex)=>{
       const card=document.createElement("div");card.className="result-card"+(remnant?" remnant-result":"");
       const head=document.createElement("div");head.className="result-title";
@@ -433,9 +435,15 @@
       card.appendChild(summary);wrap.appendChild(card);
     };
     let remIndex=0;
-    remnantResults.forEach((x,i)=>x.results.forEach((svg,j)=>{addCard(svg,""+(visibleRemnants[i]?.displayId||("REM-"+String(i+1).padStart(3,"0")))+" · раскрой "+(j+1),visibleRemnants[i],remIndex++); }));
-    newResults.forEach((svg,i)=>addCard(svg,"Новый лист "+(i+1),null,-1));
-    $("statSheets").textContent=remnantResults.reduce((n,x)=>n+x.results.length,0)+newResults.length;
+    safeRemnantResults.forEach((x,i)=>x.results.forEach((svg,j)=>{
+      try{addCard(svg,""+(visibleRemnants[i]?.displayId||("REM-"+String(i+1).padStart(3,"0")))+" · раскрой "+(j+1),visibleRemnants[i],remIndex++)}
+      catch(err){console.warn("SheetNest: remnant result visualization skipped",err)}
+    }));
+    safeNewResults.forEach((svg,i)=>{
+      try{addCard(svg,"Новый лист "+(i+1),null,-1)}
+      catch(err){console.warn("SheetNest: new-sheet visualization skipped",err)}
+    });
+    $("statSheets").textContent=safeRemnantResults.reduce((n,x)=>n+x.results.length,0)+safeNewResults.length;
     $("statParts").textContent=placed;$("statEfficiency").textContent=total?Math.round(placed/total*100)+"%":"0%";
     applyCanvasZoom();
   }
