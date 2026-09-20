@@ -297,18 +297,37 @@
     document.head.appendChild(style);
   }
 
+  function parseSvgViewBox(svg){
+    const raw=(svg?.getAttribute("viewBox")||"").trim().split(/[ ,]+/).map(Number);
+    if(raw.length===4&&raw.every(Number.isFinite)&&raw[2]>0&&raw[3]>0)return {x:raw[0],y:raw[1],width:raw[2],height:raw[3]};
+    const w=Number(svg?.getAttribute("width"))||0,h=Number(svg?.getAttribute("height"))||0;
+    return {x:0,y:0,width:w>0?w:1,height:h>0?h:1};
+  }
+
   function remnantOverlayGroup(svg,remnant,index){
     if(!svg||!remnant||!Array.isArray(remnant.polygon)||remnant.polygon.length<3)return null;
-    const b=bounds(remnant.polygon);if(!Number.isFinite(b.width)||!Number.isFinite(b.height))return null;
-    const vb=(svg.getAttribute("viewBox")||"0 0 "+b.width+" "+b.height).split(/[ ,]+/).map(Number);
-    const ox=Number.isFinite(vb[0])?vb[0]:0,oy=Number.isFinite(vb[1])?vb[1]:0;
-    const ns="http://www.w3.org/2000/svg",g=document.createElementNS(ns,"g");g.classList.add("remnant-overlay");g.setAttribute("data-remnant-overlay",remnant.id||String(index));
-    const points=remnant.polygon.map(p=>(p.x-b.minX+ox)+","+(p.y-b.minY+oy)).join(" ");
+    const src=bounds(remnant.polygon);
+    if(!Number.isFinite(src.width)||!Number.isFinite(src.height)||src.width<=0||src.height<=0)return null;
+    const vb=parseSvgViewBox(svg);
+    const bin=svg.querySelector("#sheet-bin,.bin");
+    // buildBinSvg normalizes the remnant into its own bin/viewBox. If the
+    // nesting engine changes that origin/size, map the original polygon to
+    // the actual bin geometry instead of assuming 0,0 and identical scale.
+    let target={x:vb.x,y:vb.y,width:vb.width,height:vb.height};
+    if(bin){
+      const bx=Number(bin.getAttribute("x")),by=Number(bin.getAttribute("y")),bw=Number(bin.getAttribute("width")),bh=Number(bin.getAttribute("height"));
+      if([bx,by,bw,bh].every(Number.isFinite)&&bw>0&&bh>0)target={x:bx,y:by,width:bw,height:bh};
+    }
+    const sx=target.width/src.width,sy=target.height/src.height;
+    const mapPoint=p=>({x:target.x+(p.x-src.minX)*sx,y:target.y+(p.y-src.minY)*sy});
+    const ns="http://www.w3.org/2000/svg",g=document.createElementNS(ns,"g");
+    g.classList.add("remnant-overlay");g.setAttribute("data-remnant-overlay",remnant.id||String(index));
+    const points=remnant.polygon.map(p=>{const q=mapPoint(p);return q.x+","+q.y}).join(" ");
     const shape=document.createElementNS(ns,"polygon");shape.setAttribute("points",points);shape.classList.add("remnant-overlay-shape");g.appendChild(shape);
     const fit=classify(remnant.polygon,num("remnantMinLength",500),num("remnantMinWidth",300),Number(document.getElementById("gap")?.value||2));
-    const cx=b.minX+(b.width/2)+ox,cy=b.minY+(b.height/2)+oy;
+    const cx=target.x+target.width/2,cy=target.y+target.height/2;
     const label=document.createElementNS(ns,"text");label.setAttribute("x",cx);label.setAttribute("y",cy-8);label.setAttribute("text-anchor","middle");label.classList.add("remnant-overlay-label");label.textContent=remnant.displayId||("REM-"+String(index+1).padStart(3,"0"));g.appendChild(label);
-    const meta=document.createElementNS(ns,"text");meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);meta.setAttribute("text-anchor","middle");meta.classList.add("remnant-overlay-meta");meta.textContent=Math.round(b.width)+" × "+Math.round(b.height)+" мм · "+(fit.orientation===90?"90°":"0°");g.appendChild(meta);
+    const meta=document.createElementNS(ns,"text");meta.setAttribute("x",cx);meta.setAttribute("y",cy+13);meta.setAttribute("text-anchor","middle");meta.classList.add("remnant-overlay-meta");meta.textContent=Math.round(src.width)+" × "+Math.round(src.height)+" мм · "+(fit.orientation===90?"90°":"0°");g.appendChild(meta);
     return g;
   }
 
