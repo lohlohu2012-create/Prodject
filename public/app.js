@@ -952,3 +952,4 @@ function setupDiagnosticsPanel(){
 setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
 setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
+window.state=state;
