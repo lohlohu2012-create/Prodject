@@ -538,7 +538,6 @@
     const hardLimit=Math.max(30000,Math.min(180000,Number(q.seconds||30)*4000));
     let watchdog=null;
     try{
-      state.running=true;
       watchdog=setTimeout(()=>{
         if(state.running&&state.runId===runToken){
           state.runAbortReason="timeout";
