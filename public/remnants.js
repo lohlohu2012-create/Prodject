@@ -529,7 +529,6 @@
 
   async function mixedRun(){
     const runToken=(state.runId||0)+1;
-    state.runId=runToken;
     const started=Date.now();
     const q=qualityConfig();
     const hardLimit=Math.max(30000,Math.min(180000,Number(q.seconds||30)*4000));
@@ -540,6 +539,7 @@
         if(state.running&&state.runId===runToken){
           state.runAbortReason="timeout";
           state.running=false;
+          state.runId=runToken;
           try{SvgNest.stop()}catch(_){}
           $("runInfo").textContent="Расчёт остановлен по тайм-ауту";
           status("Расчёт остановлен");
