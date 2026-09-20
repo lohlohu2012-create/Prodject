@@ -1,0 +1,26 @@
+name: Syntax checks
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check app.js
+        run: node --check public/app.js
+      - name: Check nesting engine
+        shell: bash
+        run: |
+          set -e
+          for file in public/nest/*.js; do
+            node --check "$file"
+          done
+      - name: Check test script
+        run: python3 -m py_compile tests/offline-browser-smoke.py
