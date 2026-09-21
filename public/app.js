@@ -928,6 +928,7 @@ function updateProgress(){
   $("runInfo").textContent=`Перебираем раскладки · кадр ${state.searchFrames} · осталось ${Math.max(0,Math.ceil((state.durationMs-elapsed)/1000))} с`;
 }
 
+
 function startOneRun(sheet,runDurationMs,runId,workInstances=null){
   resetEngine();
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
@@ -943,24 +944,29 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
   let runBest=null;
   return new Promise(resolve=>{
     let settled=false,timer=null,interval=null;
-    const settle=(reason)=>{
+    const settle=()=>{
       if(settled)return;
       settled=true;
       if(timer)clearTimeout(timer);
       if(interval)clearInterval(interval);
       try{SvgNest.stop()}catch(_){}
-      if(reason==="timeout")state.running=false;
+      // Тайм-аут завершает только текущую попытку. Большой заказ продолжает
+      // обрабатывать следующие пакеты и может открыть новые листы.
       resolve(runBest);
     };
     const updateTimer=()=>{
-      if(!state.running){settle("stopped");return;}
+      if(!state.running||runId!==state.runId){settle();return;}
       updateProgress();
     };
-    timer=setTimeout(()=>settle("timeout"),Math.max(1000,Number(runDurationMs)||1000));
+    timer=setTimeout(settle,Math.max(1000,Number(runDurationMs)||1000));
     interval=setInterval(updateTimer,120);
     try{
       SvgNest.start(
-        progress=>{if(state.running&&runId===state.runId)$("progressBar").style.width=`${Math.max(2,Math.round((progress||0)*100))}%`;},
+        progress=>{
+          if(state.running&&runId===state.runId){
+            $("progressBar").style.width=Math.max(2,Math.round((progress||0)*100))+"%";
+          }
+        },
         (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
           if(!state.running||runId!==state.runId)return;
           if(!svglist||!svglist.length)return;
@@ -969,17 +975,26 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
           state.lastValidation=validation;
           updateDiagnosticsFromCandidate(svglist,isBest,frame,validation);
           const shownPlaced=validation.unique;
-          if(isBest&&validation.valid){
-            state.bestFrames++;
-            const taggedResults=(svglist||[]).map(svg=>{
-              try{
-                svg.setAttribute("data-sheet-w",String(sheet.w));
-                svg.setAttribute("data-sheet-h",String(sheet.h));
-              }catch(_){}
-              return svg;
-            });
-            runBest={results:taggedResults,efficiency,placed:shownPlaced,total:expectedTotal,sheet:{w:sheet.w,h:sheet.h},frame,validation};
-          }
+          const taggedResults=(svglist||[]).map(svg=>{
+            try{
+              svg.setAttribute("data-sheet-w",String(sheet.w));
+              svg.setAttribute("data-sheet-h",String(sheet.h));
+            }catch(_){}
+            return svg;
+          });
+          // Принимаем любой структурно валидный кандидат, если он лучше
+          // уже сохранённого. Не зависим только от флага isBest.
+          const candidate={
+            results:taggedResults,
+            efficiency:Number(efficiency||0),
+            placed:shownPlaced,
+            total:expectedTotal,
+            sheet:{w:sheet.w,h:sheet.h},
+            frame,
+            validation
+          };
+          if(validation.valid&&(!runBest||betterNestingCandidate(candidate,runBest)))runBest=candidate;
+
           state.resultSvgs=svglist;
           renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
           const tag=!validation.valid?"Непроверенный кандидат":(isBest?"Новый лучший":"Кандидат");
@@ -988,11 +1003,375 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
         }
       );
     }catch(err){
-      settle("error");
+      settle();
       throw err;
     }
   });
 }
+
+function resultUnitIds(svg){
+  const ids=new Set();
+  if(!svg)return ids;
+  svg.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
+    const id=group.getAttribute("data-sheetnest-unit-id");
+    if(id)ids.add(id);
+  });
+  return ids;
+}
+
+function resultInstanceIds(svg){
+  const ids=new Set();
+  if(!svg)return ids;
+  svg.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
+    const unitId=group.getAttribute("data-sheetnest-unit-id");
+    const instanceId=group.getAttribute("data-sheetnest-source-instance-id")||state.unitToInstance[unitId];
+    if(instanceId)ids.add(instanceId);
+  });
+  return ids;
+}
+
+function instanceIsFullyPlaced(instance,usedUnitIds){
+  const entry=state.instanceDiagnostics?.[instance.instanceId];
+  if(!entry)return false;
+  const expected=Math.max(1,Number(entry.expectedUnits||0));
+  const known=Array.isArray(entry.unitIds)?entry.unitIds:[];
+  if(known.length<expected)return false;
+  let placed=0;
+  known.forEach(id=>{if(usedUnitIds.has(id))placed++});
+  return placed>=expected;
+}
+
+function sanitizeResultSheets(svgList,usedUnitIds){
+  const accepted=[];
+  const reserved=usedUnitIds||new Set();
+  for(const svg of svgList||[]){
+    const clone=svg.cloneNode(true);
+    let kept=0;
+    clone.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
+      const unitId=group.getAttribute("data-sheetnest-unit-id");
+      if(!unitId||reserved.has(unitId)){
+        group.remove();
+        return;
+      }
+      reserved.add(unitId);
+      kept++;
+    });
+    if(kept>0)accepted.push(clone);
+  }
+  return accepted;
+}
+
+function instancePackingScore(instance){
+  try{
+    if(instance.kind==="custom"){
+      const b=estimateSvgBounds(instance.part.svgText);
+      return Math.max(1,b.width*b.height);
+    }
+    const s=instance.shape;
+    return s?Math.max(1,s.w*s.h):1;
+  }catch(_){return 1}
+}
+
+function selectNestingBatch(instances,size,mode="large"){
+  const list=(instances||[]).slice();
+  list.sort((a,b)=>{
+    const sa=instancePackingScore(a),sb=instancePackingScore(b);
+    if(mode==="small")return sa-sb;
+    if(mode==="mixed")return (sb-sa)||(String(a.instanceId).length-String(b.instanceId).length);
+    return sb-sa;
+  });
+  return list.slice(0,Math.max(1,size));
+}
+
+function uniqueInstances(list){
+  const map=new Map();
+  (list||[]).forEach(item=>{if(item&&item.instanceId&&!map.has(item.instanceId))map.set(item.instanceId,item)});
+  return [...map.values()];
+}
+
+async function runPoolAcrossOrientations(instances,orientations,runId,runDurationMs){
+  let best=null;
+  const pool=uniqueInstances(instances);
+  for(let oi=0;oi<orientations.length;oi++){
+    if(!state.running||runId!==state.runId)break;
+    const candidate=orientations[oi];
+    const runBest=await startOneRun(candidate,runDurationMs,runId,pool);
+    if(runBest){
+      const current={
+        results:runBest.results,
+        efficiency:Number(runBest.efficiency||0),
+        placed:Number(runBest.placed||0),
+        total:nestingUnitCount(pool),
+        sheet:{w:candidate.w,h:candidate.h},
+        frame:runBest.frame,
+        validation:runBest.validation
+      };
+      if(betterNestingCandidate(current,best))best=current;
+    }
+  }
+  return best;
+}
+
+function appendFreshResultSheets(target,svgList,usedUnitIds,sheet){
+  const localUsed=usedUnitIds||new Set();
+  const accepted=sanitizeResultSheets(svgList,localUsed);
+  accepted.forEach(svg=>{
+    if(sheet){
+      svg.setAttribute("data-sheet-w",String(sheet.w));
+      svg.setAttribute("data-sheet-h",String(sheet.h));
+    }
+    target.push(svg);
+  });
+  return accepted;
+}
+
+async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,runDurationMs){
+  let changedAny=false;
+  const maxPasses=2;
+
+  for(let pass=0;pass<maxPasses&&state.running;pass++){
+    let changedThisPass=false;
+
+    for(let sheetIndex=0;sheetIndex<committedSheets.length;sheetIndex++){
+      if(!state.running)break;
+      const currentSheet=committedSheets[sheetIndex];
+      const incumbentUnitIds=resultUnitIds(currentSheet);
+      if(incumbentUnitIds.size===0||incumbentUnitIds.size>36)continue;
+
+      const incumbentInstanceIds=resultInstanceIds(currentSheet);
+      const incumbentInstances=(allInstances||[]).filter(item=>incumbentInstanceIds.has(item.instanceId));
+      if(!incumbentInstances.length)continue;
+
+      const orderedRemaining=selectNestingBatch(remaining,10,pass%2===0?"small":"large");
+      if(!orderedRemaining.length)break;
+
+      const pool=uniqueInstances(incumbentInstances.concat(orderedRemaining));
+      const candidate=await runPoolAcrossOrientations(
+        pool,
+        orientations,
+        runId,
+        Math.max(4500,Math.min(runDurationMs,7000))
+      );
+      if(!candidate||!candidate.results?.length)continue;
+
+      let replacement=null;
+      let bestAdded=-1;
+
+      for(const candidateSheet of candidate.results){
+        const candidateUnits=resultUnitIds(candidateSheet);
+        let keepsAll=true;
+        incumbentUnitIds.forEach(id=>{if(!candidateUnits.has(id))keepsAll=false});
+        if(!keepsAll)continue;
+
+        const newUnits=[...candidateUnits].filter(id=>!usedUnitIds.has(id));
+        if(newUnits.length<=0)continue;
+
+        const baseUsed=new Set(usedUnitIds);
+        incumbentUnitIds.forEach(id=>baseUsed.delete(id));
+        const cleaned=sanitizeResultSheets([candidateSheet],baseUsed);
+        if(!cleaned.length)continue;
+
+        const cleanedUnits=resultUnitIds(cleaned[0]);
+        let preserves=true;
+        incumbentUnitIds.forEach(id=>{if(!cleanedUnits.has(id))preserves=false});
+        if(!preserves)continue;
+
+        if(newUnits.length>bestAdded){
+          bestAdded=newUnits.length;
+          replacement=cleaned[0];
+        }
+      }
+
+      if(replacement){
+        replacement.setAttribute("data-sheet-w",String(candidate.sheet.w));
+        replacement.setAttribute("data-sheet-h",String(candidate.sheet.h));
+        committedSheets[sheetIndex]=replacement;
+        resultUnitIds(replacement).forEach(id=>usedUnitIds.add(id));
+        changedThisPass=true;
+        changedAny=true;
+        remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
+        $("runInfo").textContent="Дозаполнение листа "+(sheetIndex+1)+" · добавлено "+bestAdded+" деталей";
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+    }
+
+    if(!changedThisPass)break;
+  }
+
+  return {remaining,changed:changedAny};
+}
+
+async function runSearch(){
+  if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
+  if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
+
+  const sheet=getSheet();
+  const q=qualityConfig();
+  const orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
+  const allInstances=buildNestingInstances();
+  const totalUnits=nestingUnitCount(allInstances);
+
+  state.runId+=1;
+  const runId=state.runId;
+  state.nestingManifest=createNestingManifest();
+  state.expectedPartCount=totalUnits;
+  state.lastValidation=null;
+  initializeInstanceDiagnostics();
+
+  $("nestButton").disabled=true;
+  $("stopButton").disabled=false;
+  $("downloadButton").disabled=true;
+  status("Расчёт...");
+  state.running=true;
+  state.resultSvgs=[];
+  state.resultMeta=null;
+  state.bestResultSvgs=[];
+  state.bestResultMeta=null;
+  state.searchFrames=0;
+  state.bestFrames=0;
+
+  const largeOrder=allInstances.length>28;
+  const batchSize=allInstances.length>120?14:(allInstances.length>70?18:(allInstances.length>40?22:allInstances.length));
+  const batchRunMs=largeOrder?Math.max(7000,Math.min(14000,q.seconds*1000/Math.max(1,orientations.length))):Math.max(7000,q.seconds*1000/Math.max(1,orientations.length));
+  const estimatedBatches=Math.max(1,Math.ceil(allInstances.length/Math.max(1,batchSize)));
+  state.durationMs=Math.max(1,(estimatedBatches*orientations.length+6)*batchRunMs);
+  state.startedAt=Date.now();
+  $("progressBar").style.width="0%";
+
+  const committedSheets=[];
+  const usedUnitIds=new Set();
+  let remaining=allInstances.slice();
+  let mode="large";
+  let loopGuard=0;
+
+  try{
+    while(remaining.length&&state.running&&loopGuard++<Math.max(20,allInstances.length*3)){
+      const beforeUsed=usedUnitIds.size;
+      const pool=selectNestingBatch(remaining,batchSize,mode);
+      if(!pool.length)break;
+
+      $("runInfo").textContent="Основной проход · "+remaining.length+" экземпляров осталось · режим "+(mode==="small"?"дозаполнение":"плотная укладка");
+      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,batchRunMs);
+
+      if(candidate?.results?.length){
+        appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
+      }
+
+      remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
+
+      const progressUnits=usedUnitIds.size-beforeUsed;
+      if(progressUnits>0){
+        mode=mode==="large"?"small":"large";
+      }else{
+        let rescued=false;
+        const rescueCandidates=pool.slice(0,Math.min(8,pool.length));
+        for(const single of rescueCandidates){
+          if(!state.running)break;
+          const singleBefore=usedUnitIds.size;
+          const singleBest=await runPoolAcrossOrientations(
+            [single],
+            orientations,
+            runId,
+            Math.max(5000,Math.min(batchRunMs,9000))
+          );
+          if(singleBest?.results?.length){
+            appendFreshResultSheets(committedSheets,singleBest.results,usedUnitIds,singleBest.sheet);
+          }
+          remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
+          if(usedUnitIds.size>singleBefore){
+            rescued=true;
+            break;
+          }
+        }
+
+        if(!rescued){
+          const stalled=pool.find(item=>remaining.some(r=>r.instanceId===item.instanceId))||pool[0];
+          if(stalled){
+            const entry=state.instanceDiagnostics?.[stalled.instanceId];
+            if(entry){
+              entry.status="lost";
+              entry.stage="NFP / PlacementWorker";
+              entry.issue="За полный проход не получено новое размещение. Экземпляр оставлен в списке неразмещённых.";
+            }
+          }
+          remaining=remaining.filter(item=>item.instanceId!==stalled?.instanceId);
+        }
+      }
+
+      const progressBase=Math.min(.78,usedUnitIds.size/Math.max(1,totalUnits)*.78);
+      $("progressBar").style.width=Math.round(progressBase*100)+"%";
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+
+    if(state.running&&remaining.length&&committedSheets.length){
+      const refill=await refillCommittedSheets(
+        committedSheets,
+        remaining,
+        usedUnitIds,
+        allInstances,
+        orientations,
+        runId,
+        batchRunMs
+      );
+      remaining=refill.remaining;
+    }
+
+    let extraPass=0;
+    while(state.running&&remaining.length&&extraPass++<3){
+      const before=usedUnitIds.size;
+      const pool=selectNestingBatch(remaining,Math.min(batchSize,18),extraPass%2?"small":"large");
+      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,Math.max(5500,Math.min(batchRunMs,9000)));
+      if(candidate?.results?.length)appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
+      remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
+      if(usedUnitIds.size===before)break;
+    }
+
+    const finalPlacedUnits=usedUnitIds.size;
+    state.resultSvgs=committedSheets;
+    state.bestResultSvgs=committedSheets;
+
+    const meta={
+      material:$("material").value,
+      thickness:readNumber("thickness",3),
+      sheetW:sheet.w,
+      sheetH:sheet.h,
+      margin:readNumber("margin",10),
+      gap:readNumber("gap",2),
+      efficiency:totalUnits?finalPlacedUnits/totalUnits:0,
+      placed:finalPlacedUnits,
+      total:totalUnits,
+      complete:finalPlacedUnits>=totalUnits
+    };
+    state.resultMeta=meta;
+    state.bestResultMeta=meta;
+
+    if(committedSheets.length){
+      renderResults(committedSheets,meta.efficiency,finalPlacedUnits,totalUnits,sheet,{mode:"final",frame:state.searchFrames,isBest:meta.complete});
+      finalizeDiagnostics(committedSheets,meta.complete?"complete":"partial-result");
+    }else{
+      finalizeDiagnostics([],"no-valid-result");
+    }
+
+    $("progressBar").style.width="100%";
+    if(finalPlacedUnits>=totalUnits){
+      $("runInfo").textContent="Готово · "+committedSheets.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · просмотрено "+state.searchFrames+" вариантов";
+      status("Раскрой рассчитан");
+    }else if(finalPlacedUnits>0){
+      const missing=Math.max(0,totalUnits-finalPlacedUnits);
+      $("runInfo").textContent="Частичный результат · "+committedSheets.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · не размещено: "+missing;
+      status("Частичный раскрой");
+    }else{
+      $("runInfo").textContent="Не удалось разместить детали на листе.";
+      status("Нет результата");
+    }
+  }finally{
+    try{SvgNest.stop()}catch(_){}
+    state.running=false;
+    $("nestButton").disabled=false;
+    $("stopButton").disabled=true;
+  }
+}
+
 function nestingUnitCount(instances){
   return (instances||[]).reduce((sum,item)=>sum+(item?.kind==="custom"?partNestingUnits(item.part):1),0);
 }
