@@ -539,6 +539,7 @@ function resetEngine(runtimeConfig=null){
     useHoles:true,
     exploreConcave:true,
     persistNfpCache:q.persistNfpCache!==false,
+    fastPlacementScoring:q.fastPlacementScoring!==false,
   });
 }
 
