@@ -33,7 +33,9 @@
 			populationSize: 10,
 			mutationRate: 10,
 			useHoles: false,
-			exploreConcave: false
+			exploreConcave: false,
+			persistNfpCache: true,
+			fastPlacementScoring: true
 		};
 		
 		this.working = false;
@@ -145,6 +147,12 @@
 			
 			if('exploreConcave' in c){
 				config.exploreConcave = !!c.exploreConcave;
+			}
+			if('persistNfpCache' in c){
+				config.persistNfpCache = !!c.persistNfpCache;
+			}
+			if('fastPlacementScoring' in c){
+				config.fastPlacementScoring = !!c.fastPlacementScoring;
 			}
 			
 			SvgParser.config({ tolerance: config.curveTolerance});
@@ -332,12 +340,15 @@
 			
 			var nfpPairs = [];
 			var key;
+			var newCache = {};
 			
 			for(i=0; i<placelist.length; i++){
 				var part = placelist[i];
 				key = {A: binPolygon.id, B: part.id, inside: true, Arotation: 0, Brotation: rotations[i]};
 				if(!nfpCache[JSON.stringify(key)]){
 					nfpPairs.push({A: binPolygon, B: part, key: key});
+				}else{
+					newCache[JSON.stringify(key)] = nfpCache[JSON.stringify(key)];
 				}
 				for(j=0; j<i; j++){
 					var placed = placelist[j];

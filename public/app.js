@@ -1,4 +1,4 @@
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -10,6 +10,21 @@ function qualityConfig(){
   if(q==="max")return{mode:"max",seconds:90,populationSize:40,mutationRate:18};
   return{mode:"normal",seconds:30,populationSize:24,mutationRate:15};
 }
+function benchmarkRuntimeConfig(orderSize,mode,budgetMs){
+  const base=adaptiveNestingConfig(orderSize);
+  const baseline=mode==="baseline";
+  return {
+    ...base,
+    benchmark:true,
+    batchMs:Math.max(1000,Number(budgetMs)||5000),
+    persistNfpCache:!baseline,
+    fastPlacementScoring:!baseline,
+    secondOrientationThreshold:0,
+    refillPasses:base.refillPasses,
+    refillSheets:base.refillSheets
+  };
+}
+
 function adaptiveNestingConfig(orderSize){
   const q=qualityConfig();
   const large=orderSize>28;
@@ -522,7 +537,9 @@ function resetEngine(runtimeConfig=null){
     mutationRate:q.mutationRate,
     curveTolerance:.2,
     useHoles:true,
-    exploreConcave:true
+    exploreConcave:true,
+    persistNfpCache:q.persistNfpCache!==false,
+    fastPlacementScoring:q.fastPlacementScoring!==false,
   });
 }
 
@@ -1022,8 +1039,8 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
           state.lastValidation=validation;
           const shownPlaced=validation.unique;
           const now=Date.now();
-          const renderSearch=now-state.lastSearchRenderAt>=450||isBest;
-          const renderDiagnostics=!activeInstances.length||now-state.lastDiagnosticsRenderAt>=650||isBest;
+          const renderSearch=!perf.benchmark&&(now-state.lastSearchRenderAt>=450||isBest);
+          const renderDiagnostics=!perf.benchmark&&(!activeInstances.length||now-state.lastDiagnosticsRenderAt>=650||isBest);
           if(renderDiagnostics){
             updateDiagnosticsFromCandidate(svglist,isBest,frame,validation,true);
             state.lastDiagnosticsRenderAt=now;
@@ -1273,7 +1290,10 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
   return {remaining,changed:changedAny};
 }
 
-async function runSearch(){
+async function runSearch(options={}){
+  const benchmark=Boolean(options.benchmark);
+  const benchmarkMode=options.benchmarkMode||"optimized";
+  const benchmarkBudgetMs=Math.max(1000,Number(options.benchmarkBudgetMs)||5000);
   if(!state.customParts.length&&!state.libraryParts.length)throw new Error("Загрузите один или несколько DXF/SVG или добавьте типовую деталь.");
   if(requestedPartCount()<1)throw new Error("Количество деталей должно быть больше нуля.");
 
@@ -1295,6 +1315,7 @@ async function runSearch(){
   $("downloadButton").disabled=true;
   status("Расчёт...");
   state.running=true;
+  state.benchmarkActive=benchmark;
   state.resultSvgs=[];
   state.resultMeta=null;
   state.bestResultSvgs=[];
@@ -1303,7 +1324,7 @@ async function runSearch(){
   state.bestFrames=0;
 
   const largeOrder=allInstances.length>28;
-  const perf=adaptiveNestingConfig(allInstances.length);
+  const perf=benchmark?benchmarkRuntimeConfig(allInstances.length,benchmarkMode,benchmarkBudgetMs):adaptiveNestingConfig(allInstances.length);
   const batchSize=largeOrder
     ?(allInstances.length>120?14:(allInstances.length>70?16:18))
     :allInstances.length;
@@ -1317,6 +1338,7 @@ async function runSearch(){
 
   const committedSheets=[];
   const usedUnitIds=new Set();
+  const benchmarkStartedAt=performance.now();
   let remaining=allInstances.slice();
   let mode="large";
   let loopGuard=0;
@@ -1442,12 +1464,37 @@ async function runSearch(){
     state.resultMeta=meta;
     state.bestResultMeta=meta;
 
-    if(committedSheets.length){
-      renderResults(committedSheets,meta.efficiency,finalPlacedUnits,totalUnits,sheet,{mode:"final",frame:state.searchFrames,isBest:meta.complete});
-      finalizeDiagnostics(committedSheets,meta.complete?"complete":"partial-result");
-    }else{
-      finalizeDiagnostics([],"no-valid-result");
+    const placedUnitSet=new Set(usedUnitIds);
+    const placedInstanceIds=allInstances.filter(item=>instanceIsFullyPlaced(item,placedUnitSet)).map(item=>item.instanceId);
+    const missingInstanceIds=allInstances.filter(item=>!instanceIsFullyPlaced(item,placedUnitSet)).map(item=>item.instanceId);
+    const missingUnitIds=[];
+    allInstances.forEach(item=>{
+      const entry=state.instanceDiagnostics?.[item.instanceId];
+      (entry?.unitIds||[]).forEach(unitId=>{if(!placedUnitSet.has(unitId))missingUnitIds.push(unitId)});
+    });
+    const summary={
+      mode:benchmark?benchmarkMode:"optimized",
+      durationMs:Math.round(performance.now()-benchmarkStartedAt),
+      sheets:committedSheets.length,
+      totalUnits,
+      placedUnits:finalPlacedUnits,
+      efficiency:totalUnits?finalPlacedUnits/totalUnits:0,
+      placedInstanceIds,
+      missingInstanceIds,
+      missingUnitIds,
+      complete:finalPlacedUnits>=totalUnits
+    };
+
+    if(!benchmark){
+      if(committedSheets.length){
+        renderResults(committedSheets,meta.efficiency,finalPlacedUnits,totalUnits,sheet,{mode:"final",frame:state.searchFrames,isBest:meta.complete});
+        finalizeDiagnostics(committedSheets,meta.complete?"complete":"partial-result");
+      }else{
+        finalizeDiagnostics([],"no-valid-result");
+      }
     }
+
+    if(benchmark)return summary;
 
     $("progressBar").style.width="100%";
     if(finalPlacedUnits>=totalUnits){
@@ -1464,6 +1511,7 @@ async function runSearch(){
   }finally{
     try{SvgNest.stop()}catch(_){}
     state.running=false;
+    state.benchmarkActive=false;
     $("nestButton").disabled=false;
     $("stopButton").disabled=true;
   }
@@ -1520,6 +1568,105 @@ function betterNestingCandidate(next,best){
   return Number(next.efficiency||0)>Number(best.efficiency||0);
 }
 
+
+function benchmarkBudgetMs(){
+  const seconds=Number($("benchmarkBudget")?.value||5);
+  return Math.max(1000,Math.round(seconds*1000));
+}
+
+function benchmarkFormatMs(ms){
+  return (Number(ms||0)/1000).toFixed(2)+" с";
+}
+
+function benchmarkEscapedIds(ids){
+  return (ids||[]).length?ids.map(escapeHtml).join(", "):"—";
+}
+
+function renderBenchmarkResults(results){
+  const panel=$("benchmarkPanel"),body=$("benchmarkBody"),statusEl=$("benchmarkStatus");
+  if(!panel||!body)return;
+  panel.hidden=false;
+  if(statusEl)statusEl.textContent="Готово";
+  const baseline=results.baseline,optimized=results.optimized;
+  const timeDelta=baseline.durationMs-optimized.durationMs;
+  const timePct=baseline.durationMs?((timeDelta/baseline.durationMs)*100):0;
+  const sheetDelta=baseline.sheets-optimized.sheets;
+  const placedDelta=optimized.placedUnits-baseline.placedUnits;
+  body.innerHTML=
+    "<div class='benchmark-cards'>"+
+      "<article class='benchmark-card'><span>BASELINE</span><strong>"+benchmarkFormatMs(baseline.durationMs)+"</strong><small>"+baseline.sheets+" лист. · "+baseline.placedUnits+"/"+baseline.totalUnits+" units</small></article>"+
+      "<article class='benchmark-card optimized'><span>OPTIMIZED</span><strong>"+benchmarkFormatMs(optimized.durationMs)+"</strong><small>"+optimized.sheets+" лист. · "+optimized.placedUnits+"/"+optimized.totalUnits+" units</small></article>"+
+      "<article class='benchmark-card delta'><span>РАЗНИЦА</span><strong>"+(timeDelta>=0?"−":"+")+benchmarkFormatMs(Math.abs(timeDelta))+"</strong><small>время: "+(timePct>=0?"":"+")+timePct.toFixed(1)+"% · листы: "+(sheetDelta>=0?"−":"+")+Math.abs(sheetDelta)+" · units: "+(placedDelta>=0?"+":"")+placedDelta+"</small></article>"+
+    "</div>"+
+    "<div class='benchmark-table'>"+
+      "<div><span>Параметр</span><b>Baseline</b><b>Optimized</b></div>"+
+      "<div><span>Время</span><b>"+benchmarkFormatMs(baseline.durationMs)+"</b><b>"+benchmarkFormatMs(optimized.durationMs)+"</b></div>"+
+      "<div><span>Листы</span><b>"+baseline.sheets+"</b><b>"+optimized.sheets+"</b></div>"+
+      "<div><span>Размещено units</span><b>"+baseline.placedUnits+"/"+baseline.totalUnits+"</b><b>"+optimized.placedUnits+"/"+optimized.totalUnits+"</b></div>"+
+      "<div><span>Instance</span><b>"+baseline.placedInstanceIds.length+" размещено</b><b>"+optimized.placedInstanceIds.length+" размещено</b></div>"+
+      "<div><span>Пропущено</span><b>"+baseline.missingInstanceIds.length+"</b><b>"+optimized.missingInstanceIds.length+"</b></div>"+
+    "</div>"+
+    "<div class='benchmark-missing'><div><strong>Пропущенные BASELINE</strong><p>"+benchmarkEscapedIds(baseline.missingInstanceIds)+"</p></div><div><strong>Пропущенные OPTIMIZED</strong><p>"+benchmarkEscapedIds(optimized.missingInstanceIds)+"</p></div></div>";
+}
+
+async function runBenchmark(){
+  if(state.running)return;
+  if(!state.customParts.length&&!state.libraryParts.length){
+    alert("Сначала загрузите DXF/SVG или добавьте типовую деталь.");
+    return;
+  }
+  const saved={
+    resultSvgs:state.resultSvgs,
+    resultMeta:state.resultMeta,
+    bestResultSvgs:state.bestResultSvgs,
+    bestResultMeta:state.bestResultMeta,
+    lastValidation:state.lastValidation,
+    runId:state.runId,
+    instanceDiagnostics:state.instanceDiagnostics,
+    unitToInstance:state.unitToInstance,
+    searchFrames:state.searchFrames,
+    bestFrames:state.bestFrames
+  };
+  const button=$("benchmarkButton");
+  if(button)button.disabled=true;
+  status("Benchmark...");
+  if($("benchmarkStatus"))$("benchmarkStatus").textContent="Выполняется";
+  if($("benchmarkPanel"))$("benchmarkPanel").hidden=false;
+
+  try{
+    const budget=benchmarkBudgetMs();
+    const baseline=await runSearch({benchmark:true,benchmarkMode:"baseline",benchmarkBudgetMs:budget});
+    const optimized=await runSearch({benchmark:true,benchmarkMode:"optimized",benchmarkBudgetMs:budget});
+    const results={schema:"sheetnest.benchmark.v1",createdAt:new Date().toISOString(),budgetMs:budget,baseline,optimized};
+    window.lastSheetNestBenchmark=results;
+    renderBenchmarkResults(results);
+    status("Benchmark завершён");
+  }catch(err){
+    status("Ошибка benchmark");
+    alert("Benchmark завершился с ошибкой: "+err.message);
+  }finally{
+    Object.assign(state,saved);
+    state.running=false;
+    state.benchmarkActive=false;
+    state.benchmarkActive=false;
+    if(button)button.disabled=false;
+    $("progressBar").style.width="0%";
+    renderDiagnosticsPanel();
+  }
+}
+
+function exportBenchmarkJSON(){
+  const data=window.lastSheetNestBenchmark;
+  if(!data)return;
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="sheetnest-benchmark-"+new Date().toISOString().replace(/[:.]/g,"-")+".json";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 $("fileInput").addEventListener("change",async event=>{
   const files=Array.from(event.target.files||[]);if(!files.length)return;
   status("Загрузка CAD…");const imported=[],failed=[];
@@ -1549,6 +1696,8 @@ $("fileInput").addEventListener("change",async event=>{
   }else{status("Ошибка");alert(failed.length?failed.join("\n"):"Не удалось загрузить файлы.");}
   event.target.value="";
 });
+$("benchmarkButton")?.addEventListener("click",()=>{Promise.resolve().then(()=>runBenchmark())});
+$("benchmarkExport")?.addEventListener("click",exportBenchmarkJSON);
 $("nestButton").addEventListener("click",()=>{Promise.resolve().then(()=>runSearch()).catch(err=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;status("Ошибка");alert(err.message)})});
 $("stopButton").addEventListener("click",()=>{state.runId+=1;state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;$("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант.";status("Остановлено");$("progressBar").style.width="100%"});
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);const sheetW=Number(item.getAttribute("data-sheet-w"))||state.resultMeta.sheetW;const sheetH=Number(item.getAttribute("data-sheet-h"))||state.resultMeta.sheetH;decorateResultSvg(clone,{...state.resultMeta,sheetW,sheetH},index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});

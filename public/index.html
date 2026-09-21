@@ -155,6 +155,15 @@
           <button id="stopButton" class="btn btn-ghost danger" disabled><span>Остановить</span><span>×</span></button>
           <button id="downloadButton" class="btn btn-ghost" disabled><span>Экспорт SVG</span><span>↓</span></button>
           <button id="downloadDxfButton" class="btn btn-ghost" disabled><span>Экспорт DXF</span><span>↓</span></button>
+          <div class="benchmark-control">
+            <div class="benchmark-control-head"><span>Benchmark A/B</span><small>без серверной зависимости</small></div>
+            <select id="benchmarkBudget" aria-label="Бюджет benchmark">
+              <option value="3">3 с / проход</option>
+              <option value="5" selected>5 с / проход</option>
+              <option value="8">8 с / проход</option>
+            </select>
+            <button id="benchmarkButton" class="btn btn-ghost benchmark-button" type="button"><span>Сравнить до / после</span><span>◫</span></button>
+          </div>
         </section>
 
         <section class="stats-grid">
@@ -210,6 +219,18 @@
           <div class="diagnostics-columns"><span>STATUS</span><span>INSTANCE / DETAIL</span><span>STAGE / PROBLEM</span></div>
           <div id="diagnosticsList" class="diagnostics-list"></div>
         </div>
+      </section>
+
+      <section id="benchmarkPanel" class="benchmark-panel" hidden>
+        <div class="benchmark-head">
+          <div>
+            <div class="benchmark-kicker">PERFORMANCE LAB</div>
+            <h2>Benchmark раскладки</h2>
+            <p id="benchmarkStatus">A/B сравнение одного и того же заказа. Baseline — ускорения отключены, Optimized — текущий движок.</p>
+          </div>
+          <button id="benchmarkExport" class="diagnostics-export" type="button">JSON</button>
+        </div>
+        <div id="benchmarkBody"></div>
       </section>
 
       <section id="canvasWrap" class="canvas-wrap">
