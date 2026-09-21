@@ -908,10 +908,13 @@ function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",
     card.className="result-card"+(view.mode==="search"?" search-frame":" sheet-card-draggable");
     const title=document.createElement("div");title.className="result-title";
     const phase=view.mode==="search"?(view.isBest?"Новый лучший вариант":"Текущий кандидат"):"Итоговая раскладка";
-    title.innerHTML=`<strong>Лист ${index+1} · ${phase}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
+    const resultSheetW=Number(svg.getAttribute("data-sheet-w"))||sheet.w;
+    const resultSheetH=Number(svg.getAttribute("data-sheet-h"))||sheet.h;
+    const resultMeta={...meta,sheetW:resultSheetW,sheetH:resultSheetH};
+    title.innerHTML=`<strong>Лист ${index+1} · ${phase}</strong><span>${resultSheetW} × ${resultSheetH} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
     const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
     if(view.mode==="search")forceVisibleSheetBin(clone,true);
-    decorateResultSvg(clone,meta,index);
+    decorateResultSvg(clone,resultMeta,index);
     if(view.mode==="search")forceVisibleSheetBin(clone,true);
     card.appendChild(title);card.appendChild(clone);
     const summary=document.createElement("div");summary.className="sheet-summary";summary.innerHTML=`<span>Поле: <strong>${meta.margin} мм</strong> · зазор: <strong>${meta.gap} мм</strong></span><span>Деталей: <strong>${placed||0}/${total||0}</strong></span>`;card.appendChild(summary);wrap.appendChild(card);
@@ -928,7 +931,7 @@ function updateProgress(){
 function startOneRun(sheet,runDurationMs,runId,workInstances=null){
   resetEngine();
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
-  const expectedTotal=activeInstances.length;
+  const expectedTotal=nestingUnitCount(activeInstances);
   const scopeIds=activeInstances.map(item=>item.instanceId);
   const nestingSvg=buildNestingSvgForInstances(sheet.w,sheet.h,activeInstances);
   markDiagnosticsStaged(nestingSvg,scopeIds);
@@ -968,7 +971,14 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
           const shownPlaced=validation.unique;
           if(isBest&&validation.valid){
             state.bestFrames++;
-            runBest={results:svglist,efficiency,placed:shownPlaced,total:expectedTotal,sheet:{w:sheet.w,h:sheet.h},frame,validation};
+            const taggedResults=(svglist||[]).map(svg=>{
+              try{
+                svg.setAttribute("data-sheet-w",String(sheet.w));
+                svg.setAttribute("data-sheet-h",String(sheet.h));
+              }catch(_){}
+              return svg;
+            });
+            runBest={results:taggedResults,efficiency,placed:shownPlaced,total:expectedTotal,sheet:{w:sheet.w,h:sheet.h},frame,validation};
           }
           state.resultSvgs=svglist;
           renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
@@ -983,13 +993,36 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
     }
   });
 }
-function placedInstanceIdsFromResults(svgList){
+function nestingUnitCount(instances){
+  return (instances||[]).reduce((sum,item)=>sum+(item?.kind==="custom"?partNestingUnits(item.part):1),0);
+}
+
+function placedUnitIdsFromResults(svgList){
   const ids=new Set();
   (svgList||[]).forEach(svg=>{
     svg.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
-      const instanceId=group.getAttribute("data-sheetnest-source-instance-id")||state.unitToInstance[group.getAttribute("data-sheetnest-unit-id")];
-      if(instanceId)ids.add(instanceId);
+      const unitId=group.getAttribute("data-sheetnest-unit-id");
+      if(unitId)ids.add(unitId);
     });
+  });
+  return ids;
+}
+
+function placedInstanceIdsFromResults(svgList){
+  const unitsByInstance=new Map();
+  (svgList||[]).forEach(svg=>{
+    svg.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
+      const unitId=group.getAttribute("data-sheetnest-unit-id");
+      const instanceId=group.getAttribute("data-sheetnest-source-instance-id")||state.unitToInstance[unitId];
+      if(!instanceId||!unitId)return;
+      if(!unitsByInstance.has(instanceId))unitsByInstance.set(instanceId,new Set());
+      unitsByInstance.get(instanceId).add(unitId);
+    });
+  });
+  const ids=new Set();
+  unitsByInstance.forEach((unitIds,instanceId)=>{
+    const expected=Number(state.instanceDiagnostics?.[instanceId]?.expectedUnits||1);
+    if(unitIds.size>=expected)ids.add(instanceId);
   });
   return ids;
 }
@@ -1018,12 +1051,12 @@ async function runSearch(){
   const sheet=getSheet(),q=qualityConfig();
   const orientations=sheet.auto?[{w:sheet.w,h:sheet.h},{w:sheet.h,h:sheet.w}]:[{w:sheet.w,h:sheet.h}];
   const allInstances=buildNestingInstances();
-  const totalCount=allInstances.length;
+  const totalUnits=nestingUnitCount(allInstances);
 
   state.runId+=1;
   const runId=state.runId;
   state.nestingManifest=createNestingManifest();
-  state.expectedPartCount=totalCount;
+  state.expectedPartCount=totalUnits;
   state.lastValidation=null;
   initializeInstanceDiagnostics();
 
@@ -1039,17 +1072,12 @@ async function runSearch(){
   state.searchFrames=0;
   state.bestFrames=0;
 
-  // Большой заказ разбивается на несколько независимых групп.
-  // NFP строится попарно, поэтому при десятках/сотнях деталей один общий
-  // расчёт становится квадратично тяжёлым и мог завершаться без единого
-  // валидного callback. Группы позволяют гарантированно получить раскладку
-  // всех экземпляров и собрать результат в несколько листов.
-  const largeOrder=totalCount>28;
-  const batchSize=totalCount>120?16:(totalCount>70?20:24);
+  const largeOrder=allInstances.length>28;
+  const batchSize=allInstances.length>120?16:(allInstances.length>70?20:24);
   const batches=[];
   if(largeOrder){
     for(let i=0;i<allInstances.length;i+=batchSize)batches.push(allInstances.slice(i,i+batchSize));
-    $("runInfo").textContent="Большой заказ · " + totalCount + " деталей · " + batches.length + " групп";
+    $("runInfo").textContent="Большой заказ · "+allInstances.length+" экземпляров · "+batches.length+" групп";
   }else{
     batches.push(allInstances);
   }
@@ -1062,101 +1090,80 @@ async function runSearch(){
   $("progressBar").style.width="0%";
 
   const finalResults=[];
-  let finalPlaced=0;
-  let batchIndex=0;
+  let stageIndex=0;
 
   try{
-    for(const batch of batches){
+    for(let bi=0;bi<batches.length;bi++){
+      const batch=batches[bi];
       if(!state.running)break;
 
       let bestBatch=null;
-      for(const candidate of orientations){
+      for(let oi=0;oi<orientations.length;oi++){
         if(!state.running)break;
-
-        const stageStart=Date.now();
+        const candidate=orientations[oi];
         const runBest=await startOneRun(candidate,batchRunMs,runId,batch);
         if(runBest){
           const current={
             results:runBest.results,
             efficiency:Number(runBest.efficiency||0),
             placed:Number(runBest.placed||0),
-            total:batch.length,
+            total:nestingUnitCount(batch),
             sheet:{w:candidate.w,h:candidate.h},
             frame:runBest.frame,
             validation:runBest.validation
           };
           if(betterNestingCandidate(current,bestBatch))bestBatch=current;
         }
-
-        batchIndex++;
-        const elapsedStage=Date.now()-stageStart;
-        const overall=((batchIndex-1)+Math.min(1,elapsedStage/Math.max(1,batchRunMs)))/Math.max(1,totalStages);
-        $("progressBar").style.width=Math.round(Math.min(1,overall)*100)+"%";
-        $("runInfo").textContent="Группа "+(batches.indexOf(batch)+1)+"/"+batches.length+" · ориентация "+(orientations.indexOf(candidate)+1)+"/"+orientations.length+" · "+batch.length+" деталей";
+        stageIndex++;
+        $("progressBar").style.width=Math.round(Math.min(1,stageIndex/Math.max(1,totalStages)*100))+"%";
+        $("runInfo").textContent="Группа "+(bi+1)+"/"+batches.length+" · ориентация "+(oi+1)+"/"+orientations.length+" · "+batch.length+" экземпляров";
       }
 
-      if(bestBatch){
-        finalResults.push(...bestBatch.results);
-        const placedIds=placedInstanceIdsFromResults(bestBatch.results);
-        finalPlaced+=placedIds.size;
+      const batchPlaced=bestBatch?placedInstanceIdsFromResults(bestBatch.results):new Set();
+      if(bestBatch)finalResults.push(...bestBatch.results);
 
-        if(placedIds.size===0){
-          // Защита от застревания: пробуем по одному экземпляру.
-          // Даже если плотная группа не нашлась за отведённое время,
-          // отдельная деталь не теряется из заказа.
-          for(const single of batch){
+      // Любые экземпляры, которые не вошли в пакетный результат, пробуем отдельно.
+      // Это гарантирует, что частичный результат одной группы не похоронит оставшиеся детали.
+      const leftovers=batch.filter(item=>!batchPlaced.has(item.instanceId));
+      if(leftovers.length){
+        for(const single of leftovers){
+          if(!state.running)break;
+          let singleBest=null;
+          for(let oi=0;oi<orientations.length;oi++){
             if(!state.running)break;
-            if(finalResults.length>0&&placedInstanceIdsFromResults(finalResults).has(single.instanceId))continue;
-            let singleBest=null;
-            for(const candidate of orientations){
-              if(!state.running)break;
-              const runBest=await startOneRun(candidate,Math.max(5000,batchRunMs),runId,[single]);
-              if(runBest){
-                const current={
-                  results:runBest.results,
-                  efficiency:Number(runBest.efficiency||0),
-                  placed:Number(runBest.placed||0),
-                  total:1,
-                  sheet:{w:candidate.w,h:candidate.h},
-                  frame:runBest.frame,
-                  validation:runBest.validation
-                };
-                if(betterNestingCandidate(current,singleBest))singleBest=current;
-              }
+            const candidate=orientations[oi];
+            const runBest=await startOneRun(candidate,Math.max(5000,batchRunMs),runId,[single]);
+            if(runBest){
+              const current={
+                results:runBest.results,
+                efficiency:Number(runBest.efficiency||0),
+                placed:Number(runBest.placed||0),
+                total:nestingUnitCount([single]),
+                sheet:{w:candidate.w,h:candidate.h},
+                frame:runBest.frame,
+                validation:runBest.validation
+              };
+              if(betterNestingCandidate(current,singleBest))singleBest=current;
             }
-            if(singleBest){
-              finalResults.push(...singleBest.results);
-              const ids=placedInstanceIdsFromResults(singleBest.results);
-              finalPlaced+=ids.size;
-            }
+          }
+          if(singleBest){
+            const singlePlaced=placedInstanceIdsFromResults(singleBest.results);
+            if(singlePlaced.has(single.instanceId))finalResults.push(...singleBest.results);
           }
         }
       }
-
-      // Не останавливаемся на первой неудачной группе: остальные экземпляры
-      // должны получить собственную попытку.
-      if(batchIndex<totalStages){
-        const elapsed=Date.now()-state.startedAt;
-        $("progressBar").style.width=Math.round(Math.min(1,elapsed/state.durationMs)*100)+"%";
-      }
     }
 
-    // Удаляем возможные дубликаты листов, если fallback одиночных деталей
-    // был активирован после частичного batch-результата.
-    const seenResultKeys=new Set();
-    const dedupResults=[];
+    const seenUnitIds=new Set(),dedupResults=[];
     for(const svg of finalResults){
-      const key=new XMLSerializer().serializeToString(svg);
-      if(seenResultKeys.has(key))continue;
-      seenResultKeys.add(key);
+      const unitIds=placedUnitIdsFromResults([svg]);
+      const signature=[...unitIds].sort().join("|")+":"+svg.getAttribute("data-sheet-w")+":"+svg.getAttribute("data-sheet-h");
+      if(seenUnitIds.has(signature))continue;
+      for(const id of unitIds)seenUnitIds.add(id);
       dedupResults.push(svg);
     }
 
-    // Фактическое число размещённых экземпляров считаем по исходным instanceId,
-    // а не по числу SVG-контуров.
-    const finalPlacedIds=placedInstanceIdsFromResults(dedupResults);
-    finalPlaced=finalPlacedIds.size;
-
+    const finalPlacedUnits=placedUnitIdsFromResults(dedupResults).size;
     state.resultSvgs=dedupResults;
     state.bestResultSvgs=dedupResults;
 
@@ -1167,28 +1174,28 @@ async function runSearch(){
       sheetH:sheet.h,
       margin:readNumber("margin",10),
       gap:readNumber("gap",2),
-      efficiency:totalCount?finalPlaced/totalCount:0,
-      placed:finalPlaced,
-      total:totalCount,
-      complete:finalPlaced>=totalCount
+      efficiency:totalUnits?finalPlacedUnits/totalUnits:0,
+      placed:finalPlacedUnits,
+      total:totalUnits,
+      complete:finalPlacedUnits>=totalUnits
     };
     state.resultMeta=meta;
     state.bestResultMeta=meta;
 
     if(dedupResults.length){
-      renderResults(dedupResults,meta.efficiency,finalPlaced,totalCount,sheet,{mode:"final",frame:state.searchFrames,isBest:meta.complete});
+      renderResults(dedupResults,meta.efficiency,finalPlacedUnits,totalUnits,sheet,{mode:"final",frame:state.searchFrames,isBest:meta.complete});
       finalizeDiagnostics(dedupResults,meta.complete?"complete":"no-valid-result");
     }else{
       finalizeDiagnostics([],"no-valid-result");
     }
 
     $("progressBar").style.width="100%";
-    if(finalPlaced>=totalCount){
-      $("runInfo").textContent="Готово · "+dedupResults.length+" лист(ов) · "+finalPlaced+"/"+totalCount+" деталей · просмотрено "+state.searchFrames+" вариантов";
+    if(finalPlacedUnits>=totalUnits){
+      $("runInfo").textContent="Готово · "+dedupResults.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · просмотрено "+state.searchFrames+" вариантов";
       status("Раскрой рассчитан");
-    }else if(finalPlaced>0){
-      const missing=totalCount-finalPlaced;
-      $("runInfo").textContent="Частичный результат · "+dedupResults.length+" лист(ов) · "+finalPlaced+"/"+totalCount+" деталей · не размещено: "+missing;
+    }else if(finalPlacedUnits>0){
+      const missing=Math.max(0,totalUnits-finalPlacedUnits);
+      $("runInfo").textContent="Частичный результат · "+dedupResults.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · не размещено: "+missing;
       status("Частичный раскрой");
     }else{
       $("runInfo").textContent="Не удалось разместить детали на листе.";
