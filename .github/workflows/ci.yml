@@ -25,6 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install browser test dependency
-        run: python3 -m pip install --user websocket-client
+        run: python3 -m pip install --user websocket-client pillow
       - name: Run offline browser scenario
         run: python3 tests/offline-browser-smoke.py
