@@ -81,6 +81,7 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 		var allplacements = [];
 		var fitness = 0;
 		var binarea = Math.abs(GeometryUtil.polygonArea(self.binPolygon));
+		var workerBinBounds = GeometryUtil.getPolygonBounds(self.binPolygon);
 		var key, nfp;
 		
 		while(paths.length > 0){
@@ -120,22 +121,32 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 				
 				var position = null;
 				if(placed.length == 0){
-					// first placement, put it on the left
+					// First placement: use a bottom-left anchor in dense mode.
+					var firstScore = null;
 					for(j=0; j<binNfp.length; j++){
 						for(k=0; k<binNfp[j].length; k++){
-							if(position === null || binNfp[j][k].x-path[0].x < position.x ){
+							var fx = binNfp[j][k].x-path[0].x;
+							var fy = binNfp[j][k].y-path[0].y;
+							var score = self.config.densePlacementScoring===false
+								? fx
+								: (fy/Math.max(1,workerBinBounds.height))*10 + (fx/Math.max(1,workerBinBounds.width));
+							if(position === null || score < firstScore){
+								firstScore = score;
 								position = {
-									x: binNfp[j][k].x-path[0].x,
-									y: binNfp[j][k].y-path[0].y,
+									x: fx,
+									y: fy,
 									id: path.id,
 									rotation: path.rotation
-								}
+								};
 							}
 						}
 					}
 					
-					placements.push(position);
-					placed.push(path);
+					if(position){
+						placements.push(position);
+						placed.push(path);
+						placedAreaInBin += Math.abs(GeometryUtil.polygonArea(path));
+					}
 					
 					continue;
 				}
@@ -282,7 +293,16 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 								width:Math.max(placedMaxX,shiftedMaxX)-Math.min(placedMinX,shiftedMinX),
 								height:Math.max(placedMaxY,shiftedMaxY)-Math.min(placedMinY,shiftedMinY)
 							};
-							area=rectbounds.width*2+rectbounds.height;
+							if(self.config.densePlacementScoring===false){
+								area=rectbounds.width*2+rectbounds.height;
+							}else{
+								var normalizedBox=(rectbounds.width*rectbounds.height)/Math.max(1,binarea);
+								var bottomLeft=(rectbounds.x/Math.max(1,workerBinBounds.width))+
+									(rectbounds.y/Math.max(1,workerBinBounds.height));
+								var compactness=(rectbounds.width/Math.max(1,workerBinBounds.width))+
+									(rectbounds.height/Math.max(1,workerBinBounds.height));
+								area=normalizedBox*1000+bottomLeft*25+compactness*2;
+							}
 							if(minarea===null||area<minarea||(GeometryUtil.almostEqual(minarea,area)&&(minx===null||shiftvector.x<minx))){
 								minarea=area;minwidth=rectbounds.width;position=shiftvector;minx=shiftvector.x;
 							}
@@ -292,7 +312,15 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 				if(position){
 					placed.push(path);
 					placements.push(position);
+					placedAreaInBin += Math.abs(GeometryUtil.polygonArea(path));
 				}
+			}
+
+			// Penalize a poorly filled active sheet. This makes the GA prefer
+			// arrangements that keep usable space for additional small parts.
+			if(placements.length > 0){
+				var fillRatio = Math.min(1, Math.max(0, placedAreaInBin/Math.max(1,binarea)));
+				fitness += (1-fillRatio)*Number(self.config.fillWeight || 0);
 			}
 			
 			if(minwidth){
