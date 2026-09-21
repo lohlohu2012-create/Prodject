@@ -1,4 +1,4 @@
-const SHEETNEST_ENGINE_BUILD="20260921-compaction-fallback-v1";
+const SHEETNEST_ENGINE_BUILD="20260921-compaction-fallback-v2";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
@@ -2025,6 +2025,29 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
     if(best&&best.newCount>=Math.max(1,Math.ceil(size*0.9)))break;
   }
 
+  // Если NFP снова вернул только одиночный элемент, не принимаем его
+  // как лист. Сначала пробуем fallback на всём оставшемся пуле, чтобы
+  // компоновка не деградировала в режим «одна деталь = один лист».
+  if(best&&best.newCount<2&&remaining.length>1){
+    for(const orientation of orientations||[]){
+      if(!state.running||runId!==state.runId)break;
+      const fallback=buildBoundingBoxFallbackCandidate(remaining,orientation,runId);
+      if(!fallback)continue;
+      const fallbackCandidate=chooseBestNestingSheet(
+        fallback.results,usedUnitIds,allInstances,orientation
+      );
+      if(fallbackCandidate&&fallbackCandidate.newCount>best.newCount){
+        fallbackCandidate.orientation=orientation;
+        fallbackCandidate.poolSize=remaining.length;
+        fallbackCandidate.frame=fallback.frame;
+        fallbackCandidate.attemptError=null;
+        fallbackCandidate.fallback=true;
+        fallbackCandidate.fallbackPlaced=fallback.placed;
+        best=fallbackCandidate;
+      }
+    }
+  }
+
   return {best,attempted,initialPoolSize:initialSize};
 }
 async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf,options=null){
@@ -2452,3 +2475,6 @@ setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
 setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
 window.state=state
+
+
+
