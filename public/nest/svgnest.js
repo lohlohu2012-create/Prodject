@@ -678,6 +678,10 @@
 			toTree(polygons);
 
 			// Persist one stable id for every root nesting unit.
+			// The ordinal is scoped to sourceInstanceId so retrying the same
+			// geometry cannot generate different unit ids just because the
+			// polygon tree contained a different number/order of other roots.
+			var sourceUnitOrdinal = {};
 			for(i=0; i<polygons.length; i++){
 				var rootPoly = polygons[i];
 				var rootElement = paths[rootPoly.source];
@@ -685,7 +689,10 @@
 					var sourceInstanceId = rootElement.getAttribute('data-sheetnest-source-instance-id') || 'part';
 					var unitId = rootElement.getAttribute('data-sheetnest-unit-id');
 					if(!unitId){
-						unitId = sourceInstanceId + ':unit-' + rootPoly.id;
+						var ordinal = sourceUnitOrdinal[sourceInstanceId] || 0;
+						ordinal++;
+						sourceUnitOrdinal[sourceInstanceId] = ordinal;
+						unitId = sourceInstanceId + ':unit-' + ordinal;
 						rootElement.setAttribute('data-sheetnest-unit-id', unitId);
 					}
 					rootPoly.sheetnestUnitId = unitId;

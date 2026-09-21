@@ -1029,20 +1029,31 @@ function registerParsedUnits(parsed,scopeIds=null){
   const elements=Array.from(parsed.querySelectorAll("[data-sheetnest-unit-id]"));
   const parsedByInstance={};
   const scope=scopeIds?new Set(scopeIds):null;
+
+  diagnosticEntries().forEach(entry=>{
+    if(scope&&!scope.has(entry.instanceId))return;
+    (entry.unitIds||[]).forEach(unitId=>delete state.unitToInstance[unitId]);
+    entry.unitIds=[];
+    entry.parsed=false;
+  });
+
   elements.forEach(node=>{
     const unitId=node.getAttribute("data-sheetnest-unit-id");
     const instanceId=node.getAttribute("data-sheetnest-source-instance-id");
     if(!unitId||!instanceId)return;
     state.unitToInstance[unitId]=instanceId;
-    const entry=state.instanceDiagnostics[instanceId];if(!entry)return;
+    const entry=state.instanceDiagnostics[instanceId];
+    if(!entry)return;
     diagnosticAddUnique(entry.unitIds,unitId);
-    parsedByInstance[instanceId]=(parsedByInstance[instanceId]||0)+1;
+    if(!parsedByInstance[instanceId])parsedByInstance[instanceId]=new Set();
+    parsedByInstance[instanceId].add(unitId);
   });
+
   diagnosticEntries().forEach(entry=>{
     if(scope&&!scope.has(entry.instanceId))return;
-    const parsedCount=parsedByInstance[entry.instanceId]||0;
+    const parsedCount=parsedByInstance[entry.instanceId]?.size||0;
     entry.parsed=parsedCount>0;
-    if(parsedCount>=entry.expectedUnits){
+    if(parsedCount===entry.expectedUnits){
       entry.status="parsed";entry.stage="SvgNest.parse/getParts";entry.issue="Все ожидаемые nesting units распознаны.";
     }else if(parsedCount>0){
       entry.status="lost";entry.stage="SvgNest.parse/getParts";entry.issue="Распознано "+parsedCount+" из "+entry.expectedUnits+" nesting units.";
@@ -1167,6 +1178,103 @@ function updateProgress(){
 }
 
 
+function directSinglePartCandidate(sheet,instance,runId){
+  if(!instance||!instance.instanceId||!state.running||runId!==state.runId)return null;
+  const expected=nestingUnitCount([instance]);
+  if(expected!==1)return null;
+  try{
+    const nestingSvg=buildNestingSvgForInstances(sheet.w,sheet.h,[instance]);
+    const doc=new DOMParser().parseFromString(nestingSvg,"image/svg+xml");
+    const root=doc.documentElement;
+    const staged=root&&root.querySelector("[data-sheetnest-stage-instance]");
+    if(!staged)return null;
+    const margin=Math.max(0,readNumber("margin",10));
+    const usableW=Math.max(1,sheet.w-2*margin);
+    const usableH=Math.max(1,sheet.h-2*margin);
+    const bounds=instance.kind==="custom"?estimateSvgBounds(instance.part.svgText):{width:instance.shape?.w||1,height:instance.shape?.h||1};
+    const requestedRotations=Math.max(1,Math.floor(readNumber("rotations",2)));
+    const angles=[];
+    if(requestedRotations<=1)angles.push(0);
+    else for(let i=0;i<requestedRotations;i++)angles.push(i*(360/requestedRotations));
+    let chosen=null;
+    for(const angle of angles){
+      const a=Math.abs(angle)*Math.PI/180,c=Math.abs(Math.cos(a)),s=Math.abs(Math.sin(a));
+      const corners=[[0,0],[bounds.width,0],[0,bounds.height],[bounds.width,bounds.height]].map(p=>({
+        x:p[0]*Math.cos(angle*Math.PI/180)-p[1]*Math.sin(angle*Math.PI/180),
+        y:p[0]*Math.sin(angle*Math.PI/180)+p[1]*Math.cos(angle*Math.PI/180)
+      }));
+      const minX=Math.min(...corners.map(p=>p.x)),maxX=Math.max(...corners.map(p=>p.x));
+      const minY=Math.min(...corners.map(p=>p.y)),maxY=Math.max(...corners.map(p=>p.y));
+      const rw=maxX-minX,rh=maxY-minY;
+      if(rw<=usableW+1e-6&&rh<=usableH+1e-6){
+        chosen={angle,minX,minY,rw,rh};
+        break;
+      }
+    }
+    if(!chosen)return null;
+
+    const ns="http://www.w3.org/2000/svg";
+    const result=document.createElementNS(ns,"svg");
+    result.setAttribute("xmlns",ns);
+    result.setAttribute("viewBox","0 0 "+sheet.w+" "+sheet.h);
+    result.setAttribute("width",String(sheet.w));
+    result.setAttribute("height",String(sheet.h));
+    result.setAttribute("preserveAspectRatio","xMidYMid meet");
+    const bin=document.createElementNS(ns,"rect");
+    bin.setAttribute("id","sheet-bin");
+    bin.setAttribute("x","0");bin.setAttribute("y","0");
+    bin.setAttribute("width",String(sheet.w));bin.setAttribute("height",String(sheet.h));
+    bin.setAttribute("fill","#b8c1ca");bin.setAttribute("fill-opacity","0.92");
+    bin.setAttribute("stroke","#687481");bin.setAttribute("stroke-width","0.9");
+    result.appendChild(bin);
+
+    const group=document.createElementNS(ns,"g");
+    const unitId=instance.instanceId+":unit-1";
+    group.setAttribute("data-sheetnest-unit-id",unitId);
+    group.setAttribute("data-sheetnest-source-instance-id",instance.instanceId);
+    const stagedTransform=staged.getAttribute("transform")||"";
+    const tx=margin-chosen.minX,ty=margin-chosen.minY;
+    group.setAttribute("transform","translate("+tx+" "+ty+") rotate("+chosen.angle+") "+stagedTransform);
+    Array.from(staged.children).forEach(child=>{
+      const clone=child.cloneNode(true);
+      clone.removeAttribute("data-sheetnest-unit-id");
+      group.appendChild(clone);
+    });
+    result.appendChild(group);
+    result.setAttribute("data-sheet-w",String(sheet.w));
+    result.setAttribute("data-sheet-h",String(sheet.h));
+
+    const entry=state.instanceDiagnostics?.[instance.instanceId];
+    if(entry){
+      entry.unitIds=[unitId];
+      entry.parsed=true;
+      entry.staged=true;
+      entry.status="parsed";
+      entry.stage="Прямое размещение";
+      entry.issue="Одиночная деталь помещена без NFP.";
+      state.unitToInstance[unitId]=instance.instanceId;
+    }
+    const validation=validateNestingResult([result],1,1);
+    if(!validation.valid)return null;
+    state.searchFrames++;
+    updateDiagnosticsFromCandidate([result],true,state.searchFrames,validation,true);
+    const sheetArea=Math.max(1,usableW*usableH);
+    const fill=Math.min(1,Math.max(0,estimateInstanceAreaForPool(instance)/sheetArea));
+    return {
+      results:[result],
+      efficiency:fill,
+      placed:1,
+      total:1,
+      sheet:{w:sheet.w,h:sheet.h},
+      frame:state.searchFrames,
+      validation
+    };
+  }catch(err){
+    console.warn("SheetNest direct single-part placement failed",err);
+    return null;
+  }
+}
+
 function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=null){
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
   const perf=runtimeConfig||adaptiveNestingConfig(activeInstances.length);
@@ -1176,6 +1284,16 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
   const scopeIds=activeInstances.map(item=>item.instanceId);
   const nestingSvg=buildNestingSvgForInstances(sheet.w,sheet.h,activeInstances);
   markDiagnosticsStaged(nestingSvg,scopeIds);
+
+  if(activeInstances.length===1&&expectedTotal===1){
+    const direct=directSinglePartCandidate(sheet,activeInstances[0],runId);
+    if(direct){
+      renderResults(direct.results,direct.efficiency,direct.placed,direct.total,sheet,{mode:"search",frame:direct.frame,isBest:true});
+      state.lastValidation=direct.validation;
+      return Promise.resolve(direct);
+    }
+  }
+
   const parsed=SvgNest.parsesvg(nestingSvg);
   registerParsedUnits(parsed,scopeIds);
   const parsedUnits=parsed.querySelectorAll("[data-sheetnest-unit-id]").length;
