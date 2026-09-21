@@ -34,7 +34,8 @@
 			mutationRate: 10,
 			useHoles: false,
 			exploreConcave: false,
-			persistNfpCache: true
+			persistNfpCache: true,
+			fastPlacementScoring: true
 		};
 		
 		this.working = false;
@@ -149,6 +150,9 @@
 			}
 			if('persistNfpCache' in c){
 				config.persistNfpCache = !!c.persistNfpCache;
+			}
+			if('fastPlacementScoring' in c){
+				config.fastPlacementScoring = !!c.fastPlacementScoring;
 			}
 			
 			SvgParser.config({ tolerance: config.curveTolerance});
