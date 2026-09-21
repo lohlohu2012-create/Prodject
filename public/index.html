@@ -233,6 +233,36 @@
         <div id="benchmarkBody"></div>
       </section>
 
+      <section id="laserPanel" class="laser-panel" hidden>
+        <div class="laser-head">
+          <div>
+            <div class="laser-kicker">LASER CUTTING · 3 kW</div>
+            <h2>Расчёт времени резки</h2>
+            <p>Справочная скорость Bodor 3 кВт + настраиваемые прокол и холостой ход.</p>
+          </div>
+          <div id="laserSource" class="laser-source">—</div>
+        </div>
+        <div class="laser-controls">
+          <label><span>Скорость вручную</span><div class="input-suffix"><input id="laserSpeedOverride" type="number" min="0" step="50" placeholder="авто"><em>мм/мин</em></div></label>
+          <label><span>Прокол</span><div class="input-suffix"><input id="laserPierceSec" type="number" min="0" step="0.1" value="1"><em>с</em></div></label>
+          <label><span>Холостой ход</span><div class="input-suffix"><input id="laserRapidMpm" type="number" min="1" step="1" value="50"><em>м/мин</em></div></label>
+        </div>
+        <div class="laser-profile">
+          <span><small>Материал</small><b id="laserMaterial">—</b></span>
+          <span><small>Профиль</small><b id="laserProfile">—</b></span>
+          <span><small>Газ</small><b id="laserGas">—</b></span>
+          <span><small>Скорость</small><b id="laserSpeed">—</b></span>
+        </div>
+        <div class="laser-stats">
+          <div><small>Длина реза</small><strong id="laserCutLength">—</strong></div>
+          <div><small>Холостой ход</small><strong id="laserRapidLength">—</strong></div>
+          <div><small>Контуры</small><strong id="laserContours">0</strong></div>
+          <div><small>Проколы</small><strong id="laserPierces">0</strong></div>
+          <div><small>Чистое время резки</small><strong id="laserCutTime">—</strong></div>
+          <div class="laser-total"><small>Итого</small><strong id="laserTotalTime">—</strong></div>
+        </div>
+      </section>
+
       <section id="canvasWrap" class="canvas-wrap">
         <div class="canvas-empty">
           <div class="empty-grid">
@@ -261,5 +291,6 @@
   <script src="nest/svgnest.js?v=20260921-stability-pass-v1"></script>
   <script src="app.js?v=20260921-stability-pass-v1"></script>
   <script src="dxf-export.js"></script>
+  <script src="laser-estimator.js"></script>
 </body>
 </html>
