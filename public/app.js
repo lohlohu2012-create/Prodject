@@ -2355,8 +2355,8 @@ async function runSearch(options={}){
       }
     }
 
-    setRunStage("Финализация",finalPlacedUnits+"/"+totalUnits+" units");
     const finalPlacedUnits=usedUnitIds.size;
+    setRunStage("Финализация",finalPlacedUnits+"/"+totalUnits+" units");
     state.resultSvgs=committedSheets;
     state.bestResultSvgs=committedSheets;
 
