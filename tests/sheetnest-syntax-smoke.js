@@ -33,6 +33,11 @@ assert(!exporter.includes('clone.removeAttribute("width")'),"DXF exporter must p
 assert(!exporter.includes('clone.removeAttribute("height")'),"DXF exporter must preserve nesting SVG height");
 assert(exporter.includes("sheetEntities"),"DXF exporter geometry audit is missing");
 assert(exporter.includes("Часть геометрии деталей выходит за границы листа"),"DXF exporter boundary validation is missing");
+assert(exporter.includes('"2","TABLES"'),"DXF exporter must define TABLES");
+assert(exporter.includes('"LAYER"'),"DXF exporter must define LAYER table");
+assert(exporter.includes('"CONTINUOUS"'),"DXF exporter must define CONTINUOUS linetype");
+assert(exporter.includes("detailRecords.sort"),"DXF exporter must order cut contours before the sheet boundary");
+assert(exporter.includes("rec.depth"),"DXF exporter must support inner-before-outer cut ordering");
 const laser=read("public/laser-estimator.js");
 assert(laser.includes("BODOR_3KW"),"Laser estimator reference table is missing");
 assert(laser.includes("laserTotalTime"),"Laser result integration is missing");
