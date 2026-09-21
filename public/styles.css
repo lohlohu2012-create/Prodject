@@ -610,6 +610,14 @@ select:focus,input:focus{
     #f4f7f9;
   background-size:28px 28px;
 }
+/* Search candidates must never inherit the SVG default black fill. */
+.canvas-wrap.searching .sheet-svg #sheet-bin,
+.canvas-wrap.searching .sheet-svg .bin{
+  fill:#b8c1ca !important;
+  fill-opacity:.92 !important;
+  stroke:#687481 !important;
+  stroke-width:.9 !important;
+}
 .search-frame{
   animation:searchFrameIn .22s ease-out;
 }
