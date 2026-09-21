@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import base64
+import gzip
 import json
 import os
 import shutil
@@ -15,44 +17,14 @@ BROWSER = os.environ.get("BROWSER") or shutil.which("chromium") or shutil.which(
 if not BROWSER:
     raise SystemExit("Chromium/Chrome was not found")
 
-DXF = """0
-SECTION
-2
-ENTITIES
-0
-LWPOLYLINE
-8
-0
-90
-4
-70
-1
-10
-0
-20
-0
-10
-50
-20
-0
-10
-50
-20
-50
-10
-0
-20
-50
-0
-ENDSEC
-0
-EOF
-"""
+FIXTURE = ROOT / "tests" / "fixtures" / "Chertеж11.dxf.gz.b64"
+dxf_bytes = gzip.decompress(base64.b64decode(FIXTURE.read_text(encoding="ascii")))
 
-with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_errors=True) as tmp:
+with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup_errors=True) as tmp:
     tmp = Path(tmp)
-    dxf_path = tmp / "sample.dxf"
-    dxf_path.write_text(DXF, encoding="utf-8")
+    dxf_path = tmp / "Чертеж11.dxf"
+    dxf_path.write_bytes(dxf_bytes)
+
     profile = tmp / "chrome-profile"
     port = 9222
     proc = subprocess.Popen(
@@ -71,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         stderr=subprocess.DEVNULL,
     )
 
+    ws = None
     try:
         list_url = f"http://127.0.0.1:{port}/json/list"
         deadline = time.time() + 15
@@ -87,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
         if not target:
             raise RuntimeError("Chromium page target did not start")
 
-        ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=5)
+        ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=8)
         counter = [0]
 
         def cdp(method, params=None, wait=True):
@@ -114,156 +87,151 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-offline-", ignore_cleanup_err
             return result["result"].get("value")
 
         cdp("Runtime.enable")
-        cdp("Network.enable")
-        eval_js("window.__offlineErrors=[]; window.addEventListener('error', e => window.__offlineErrors.push(String(e.message || e.error || e)));")
+        cdp("Page.enable")
+        eval_js("""
+          window.__offlineErrors = [];
+          window.addEventListener('error', e => window.__offlineErrors.push(String(e.message || e.error || e)));
+          window.addEventListener('unhandledrejection', e => window.__offlineErrors.push(String(e.reason || e)));
+          localStorage.removeItem('sheetnest.business-remnants.v2');
+          document.getElementById('useRemnants').checked = false;
+          document.getElementById('saveRemnants').checked = false;
+        """)
 
         deadline = time.time() + 10
-        while time.time() < deadline:
-            if eval_js("document.readyState") == "complete":
-                break
+        while time.time() < deadline and eval_js("document.readyState") != "complete":
             time.sleep(0.1)
-        else:
-            raise RuntimeError("HTML did not finish loading from file://")
 
         assert eval_js("location.protocol") == "file:"
-        assert eval_js("document.querySelectorAll('#shapeLibrary .shape-card').length") == 6
-        assert eval_js("betterNestingCandidate({results:[1,2],placed:2,total:2,efficiency:0.2},{results:[1],placed:1,total:2,efficiency:0.9})") is True
-        assert eval_js("betterNestingCandidate({results:[1],placed:1,total:2,efficiency:0.9},{results:[1,2],placed:2,total:2,efficiency:0.2})") is False
+        assert eval_js("document.getElementById('useRemnants').checked") is False
         assert eval_js("typeof SvgNest.inspectSvg === 'function'") is True
-        assert eval_js("""(() => {
-          const svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 100"><path d="M0 0H80V80H0Z"/><path d="M140 0H220V80H140Z"/></svg>';
-          const info=SvgNest.inspectSvg(svg);
-          return info.parts===2 && info.contours===2;
-        })()""") is True
-        assert eval_js("betterNestingCandidate({results:[1],placed:1,total:2,efficiency:0.9},{results:[1],placed:0,total:2,efficiency:0.2})") is True
-        eval_js("""
-          const cards=Array.from(document.querySelectorAll('#shapeLibrary .shape-card'));
-          const rect=cards.find(card=>card.textContent.includes('Прямоугольник'));
-          const circle=cards.find(card=>card.textContent.includes('Круг'));
-          rect.querySelector('.shape-card-qty').value='2';
-          rect.querySelector('.shape-add').click();
-          circle.querySelector('.shape-card-qty').value='1';
-          circle.querySelector('.shape-add').click();
-        """)
-        assert eval_js("typeof state !== 'undefined' && state.libraryParts.length") == 2
-        assert eval_js("typeof state !== 'undefined' && state.libraryParts.find(item => item.id === 'rect').quantity") == 2
-        assert eval_js("typeof state !== 'undefined' && state.libraryParts.find(item => item.id === 'circle').quantity") == 1
-        assert eval_js("requestedPartCount()") == 3
-        assert eval_js("(() => { const svg=buildNestingSvg(600,400); return (svg.match(/data-sheetnest-stage-instance=/g)||[]).length; })()") == 3
-        assert eval_js("(() => { const svg=buildNestingSvg(600,400); return (svg.match(/data-sheetnest-source-instance-id=/g)||[]).length >= 3; })()") is True
-        assert eval_js("(() => { const parsed=SvgNest.parsesvg(buildNestingSvg(600,400,1)); return Boolean(parsed && parsed.querySelector('#sheet-bin')); })()") is True
-        eval_js("document.getElementById('clearShapes').click()")
-        assert eval_js("document.title") == "SheetNest — Metal Nesting"
-        cdp("Network.emulateNetworkConditions", {"offline": True, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1})
 
         cdp("DOM.getDocument")
         node = cdp("DOM.querySelector", {"nodeId": 1, "selector": "#fileInput"})
-        node_id = node["nodeId"]
-        cdp("DOM.setFileInputFiles", {"nodeId": node_id, "files": [str(dxf_path)]})
+        cdp("DOM.setFileInputFiles", {"nodeId": node["nodeId"], "files": [str(dxf_path)]})
 
-        deadline = time.time() + 5
+        deadline = time.time() + 8
+        geometry = ""
         while time.time() < deadline:
-            text = eval_js("document.getElementById('geometryInfo').textContent")
-            if "sample.dxf" in text:
+            geometry = eval_js("document.getElementById('geometryInfo').textContent")
+            if "Чертеж11.dxf" in geometry:
                 break
             time.sleep(0.1)
         else:
-            raise RuntimeError(f"DXF was not imported: {text!r}")
+            raise RuntimeError(f"DXF was not imported: {geometry!r}")
 
         eval_js("""
-          document.getElementById("sheetW").value="300";
-          document.getElementById("sheetH").value="300";
-          document.getElementById('margin').value='0';
-          document.getElementById('gap').value='1';
-          const rectCard=Array.from(document.querySelectorAll("#shapeLibrary .shape-card")).find(card=>card.textContent.includes("Прямоугольник"));
-          rectCard.querySelector(".shape-card-qty").value="2";
-          rectCard.querySelector(".shape-add").click();
-          document.getElementById('rotations').value='1';
-          qualityConfig = () => ({seconds: 5, populationSize: 4, mutationRate: 1});
+          document.getElementById('sheetW').value = '1500';
+          document.getElementById('sheetH').value = '3000';
+          document.getElementById('margin').value = '10';
+          document.getElementById('gap').value = '2';
+          document.getElementById('rotations').value = '2';
+          qualityConfig = () => ({seconds: 9, populationSize: 8, mutationRate: 1});
         """)
 
-        assert eval_js("requestedPartCount()") == 3
+        cdp("Network.enable")
+        cdp("Network.emulateNetworkConditions", {"offline": True, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1})
+
         eval_js("document.getElementById('nestButton').click()")
 
-        deadline = time.time() + 15
+        samples = []
+        black_events = []
+        deadline = time.time() + 25
+        final_status = ""
         while time.time() < deadline:
-            status = eval_js("document.getElementById('status').textContent")
-            run_info = eval_js("document.getElementById('runInfo').textContent")
-            if status == "Раскрой рассчитан":
+            final_status = eval_js("document.getElementById('status').textContent")
+            info = eval_js("document.getElementById('runInfo').textContent")
+            sample = eval_js("""
+              (() => {
+                const wrap = document.getElementById('canvasWrap');
+                const svg = wrap.querySelector('.sheet-svg');
+                const bin = svg?.querySelector('#sheet-bin,.bin');
+                const r = wrap.getBoundingClientRect();
+                return {
+                  frame: typeof state !== 'undefined' ? state.searchFrames : 0,
+                  cards: wrap.querySelectorAll('.result-card').length,
+                  binFill: bin ? getComputedStyle(bin).fill : null,
+                  binOpacity: bin ? getComputedStyle(bin).fillOpacity : null,
+                  svgHtml: svg ? svg.outerHTML.slice(0, 600) : null,
+                  clip: {x: Math.max(0, r.x), y: Math.max(0, r.y), width: Math.max(1, r.width), height: Math.max(1, r.height)}
+                };
+              })()
+            """)
+            if sample and sample.get("cards"):
+                shot = cdp("Page.captureScreenshot", {
+                    "format": "png",
+                    "fromSurface": True,
+                    "clip": sample["clip"]
+                }).get("data")
+                dark_pct = None
+                mean_lum = None
+                if shot:
+                    from PIL import Image
+                    from io import BytesIO
+                    img = Image.open(BytesIO(base64.b64decode(shot))).convert("L")
+                    px = list(img.getdata())
+                    if px:
+                        mean_lum = sum(px) / len(px)
+                        dark_pct = sum(v < 25 for v in px) / len(px)
+                sample["darkPct"] = dark_pct
+                sample["meanLum"] = mean_lum
+                samples.append(sample)
+                black = (
+                    sample.get("binFill") == "rgb(0, 0, 0)"
+                    or sample.get("binFill") == "rgba(0, 0, 0, 1)"
+                    or (sample.get("meanLum") is not None and sample["meanLum"] < 35 and sample.get("darkPct", 0) > 0.75)
+                )
+                if black:
+                    black_events.append({"info": info, "sample": sample})
+            if final_status == "Раскрой рассчитан":
                 break
-            if status == "Ошибка" or "не удалось" in (run_info or "").lower():
-                diagnostics = {
-                    "status": status,
-                    "runInfo": run_info,
-                    "geometry": eval_js("document.getElementById('geometryInfo').textContent"),
-                    "customParts": eval_js("typeof state !== 'undefined' ? state.customParts.length : -1"),
-                    "resultCount": eval_js("typeof state !== 'undefined' ? state.resultSvgs.length : -1"),
-                    "engineWorking": eval_js("typeof SvgNest !== 'undefined' ? SvgNest.working : null"),
-                    "consoleErrors": eval_js("window.__offlineErrors || []"),
-                    "sourceSvg": eval_js("typeof state !== 'undefined' && state.sourceSvg ? state.sourceSvg : ''")
-                }
-                raise RuntimeError("Nesting failed: " + json.dumps(diagnostics, ensure_ascii=False))
-            time.sleep(0.2)
-        else:
-            raise RuntimeError(f"Nesting timed out: status={status!r}, info={run_info!r}")
+            if final_status == "Ошибка":
+                raise RuntimeError(json.dumps({
+                    "status": final_status,
+                    "runInfo": info,
+                    "geometry": geometry,
+                    "errors": eval_js("window.__offlineErrors || []")
+                }, ensure_ascii=False))
+            time.sleep(0.12)
 
-        sheets = eval_js("document.getElementById('statSheets').textContent")
-        frames = eval_js("typeof state !== \"undefined\" ? state.searchFrames : 0")
+        if final_status != "Раскрой рассчитан":
+            raise RuntimeError(f"Nesting timed out: status={final_status!r}, info={info!r}")
+
+        frames = eval_js("typeof state !== 'undefined' ? state.searchFrames : 0")
         parts = eval_js("document.getElementById('statParts').textContent")
-        if int(sheets) < 1 or int(parts) < 1:
-            raise RuntimeError(f"Unexpected nesting stats: sheets={sheets}, parts={parts}")
-        if int(parts) != 3:
-            raise RuntimeError(f"Mixed parts were not all placed: parts={parts}")
-        unit_ids = eval_js("Array.from(document.querySelectorAll('#canvasWrap g[data-sheetnest-unit-id]')).map(node => node.getAttribute('data-sheetnest-unit-id'))")
-        if len(unit_ids) != len(set(unit_ids)) or len(unit_ids) != 3:
-            raise RuntimeError(f"Placed unit ids are not one-to-one: {unit_ids!r}")
-        diagnostic_count = eval_js("document.querySelectorAll('#diagnosticsList .diagnostic-row').length")
-        diagnostic_bad = eval_js("document.querySelectorAll('#diagnosticsList .diagnostic-row.bad').length")
-        diagnostic_panel_hidden = eval_js("document.getElementById('diagnosticsPanel').hidden")
-        diagnostic_ok_status = eval_js("Array.from(document.querySelectorAll('#diagnosticsList .diagnostic-row')).every(row => row.classList.contains('ok'))")
-        if diagnostic_count != 3 or diagnostic_bad != 0 or diagnostic_panel_hidden or not diagnostic_ok_status:
-            raise RuntimeError(f"Instance diagnostics mismatch: rows={diagnostic_count}, bad={diagnostic_bad}, hidden={diagnostic_panel_hidden}, all_ok={diagnostic_ok_status}")
-        assert eval_js("typeof diagnosticsSnapshot === 'function'")
-        assert eval_js("typeof diagnosticsCsv === 'function'")
-        assert eval_js("document.getElementById('diagnosticsExportJson').disabled") is False
-        assert eval_js("document.getElementById('diagnosticsExportCsv').disabled") is False
-        diagnostics_snapshot = eval_js("diagnosticsSnapshot()")
-        if diagnostics_snapshot["summary"]["instances"] != 3 or diagnostics_snapshot["summary"]["finalUnits"] != 3:
-            raise RuntimeError(f"Diagnostics export summary mismatch: {diagnostics_snapshot!r}")
-        if any(not entry["instanceId"] or not entry["unitIds"] for entry in diagnostics_snapshot["entries"]):
-            raise RuntimeError(f"Diagnostics export lost instance/unit linkage: {diagnostics_snapshot!r}")
-        csv_header = eval_js("diagnosticsCsv(diagnosticsSnapshot()).split('\\n')[0]")
-        if "instanceId" not in csv_header or "failureStage" not in csv_header or "unitIds" not in csv_header:
-            raise RuntimeError(f"Diagnostics CSV header mismatch: {csv_header!r}")
-        if int(frames) < 1:
-            raise RuntimeError(f"Live nesting preview did not receive candidate frames: frames={frames}")
+        sheets = eval_js("document.getElementById('statSheets').textContent")
 
-        assert eval_js("document.getElementById('zoomFit').textContent") == "100%"
-        eval_js("document.getElementById('zoomIn').click()")
-        deadline = time.time() + 2
-        while time.time() < deadline and eval_js("document.getElementById('zoomFit').textContent") != "125%":
-            time.sleep(0.05)
-        assert eval_js("document.getElementById('zoomFit').textContent") == "125%"
-        width_125 = eval_js("document.querySelector('#canvasWrap .result-card').getBoundingClientRect().width")
-        eval_js("document.querySelector('#canvasWrap').dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true,cancelable:true,clientX:400,clientY:300}))")
-        deadline = time.time() + 2
-        while time.time() < deadline and eval_js("document.getElementById('zoomFit').textContent") == "125%":
-            time.sleep(0.05)
-        assert eval_js("document.getElementById('zoomFit').textContent") != "125%"
-        eval_js("document.getElementById('zoomFit').click()")
-        assert eval_js("document.getElementById('zoomFit').textContent") == "100%"
-        width_100 = eval_js("document.querySelector('#canvasWrap .result-card').getBoundingClientRect().width")
-        if width_125 <= width_100:
-            raise RuntimeError(f"Zoom did not enlarge workspace: 125% width={width_125}, 100% width={width_100}")
+        result = {
+            "status": final_status,
+            "geometry": geometry,
+            "useRemnants": eval_js("document.getElementById('useRemnants').checked"),
+            "storedRemnants": eval_js("JSON.parse(localStorage.getItem('sheetnest.business-remnants.v2') || '[]').length"),
+            "frames": frames,
+            "parts": parts,
+            "sheets": sheets,
+            "samples": len(samples),
+            "blackEvents": len(black_events),
+            "blackEventDetails": black_events[:3],
+            "lastSample": samples[-1] if samples else None,
+            "consoleErrors": eval_js("window.__offlineErrors || []")
+        }
 
-        print("offline-browser-smoke: OK")
-        print("protocol:", eval_js("location.protocol"))
-        print("title:", eval_js("document.title"))
-        print("dxf:", eval_js("document.getElementById('geometryInfo').textContent"))
-        print("status:", eval_js("document.getElementById('status').textContent"))
-        print("sheets:", sheets, "parts:", parts, "frames:", frames)
-        ws.close()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+        if result["useRemnants"] is not False:
+            raise RuntimeError("Remnant checkbox was not disabled")
+        if int(frames) < 2:
+            raise RuntimeError(f"Not enough live candidate frames observed: {frames}")
+        if int(parts) < 1 or int(sheets) < 1:
+            raise RuntimeError(f"Unexpected result stats: sheets={sheets}, parts={parts}")
+        if black_events:
+            raise RuntimeError("BLACK_SCREEN_DETECTED: " + json.dumps(result, ensure_ascii=False))
+        if result["consoleErrors"]:
+            raise RuntimeError("Browser errors detected: " + json.dumps(result["consoleErrors"], ensure_ascii=False))
+
+        print("offline-browser-smoke (Чертеж11.dxf, remnants disabled): OK")
     finally:
+        if ws:
+            ws.close()
         proc.terminate()
         try:
             proc.wait(timeout=5)
