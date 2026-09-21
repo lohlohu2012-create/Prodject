@@ -80,8 +80,8 @@ function analyze(){
     const clone=svg.cloneNode(true);clone.removeAttribute("width");clone.removeAttribute("height");host.appendChild(clone);document.body.appendChild(host);
     try{
       const groups=[...clone.querySelectorAll("g[data-sheetnest-unit-id]")];
+      let previous=null;
       for(const group of groups){
-        let previous=null;
         const geometries=[...group.querySelectorAll("path,polyline,polygon,rect,circle,ellipse,line")].filter(el=>!el.closest("defs,clipPath,mask,pattern"));
         for(const el of geometries){
           const length=geometryLength(el);if(length>0)cutLength+=length;
@@ -89,8 +89,7 @@ function analyze(){
           if(start&&previous)rapidLength+=Math.hypot(start.x-previous.x,start.y-previous.y);
           if(start)previous=start;
           const count=contourCount(el);contours+=count;
-          const tag=el.tagName.toLowerCase();
-          if(length>0&&(tag==="path"||tag==="polygon"||tag==="rect"||tag==="circle"||tag==="ellipse"))pierces+=count;
+          if(length>0)pierces+=count;
         }
       }
     }finally{host.remove()}
