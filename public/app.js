@@ -40,6 +40,8 @@ function adaptiveNestingConfig(orderSize){
   const q=qualityConfig();
   const large=orderSize>28;
   const local=isLocalFileMode();
+  const hugeLocal=local&&orderSize>80;
+  const veryLargeLocal=local&&orderSize>140;
   if(!large){
     return{
       ...q,
@@ -65,24 +67,34 @@ function adaptiveNestingConfig(orderSize){
   const populationCap=orderSize>120?(q.mode==="max"?18:(q.mode==="fast"?10:12)):(q.mode==="max"?24:(q.mode==="fast"?10:16));
   const populationSize=Math.min(q.populationSize,populationCap);
   const mutationRate=Math.min(q.mutationRate,q.mode==="max"?16:(q.mode==="fast"?10:13));
-  const batchMs=q.mode==="max"?8000:(q.mode==="fast"?4000:6000);
+  const batchMs=hugeLocal
+    ?(q.mode==="max"?5000:(q.mode==="fast"?2500:3500))
+    :(q.mode==="max"?8000:(q.mode==="fast"?4000:6000));
   return{
     ...q,
     rotations,
-    populationSize,
-    mutationRate,
+    populationSize:hugeLocal?Math.min(populationSize,q.mode==="max"?14:10):populationSize,
+    mutationRate:hugeLocal?Math.min(mutationRate,q.mode==="max"?14:11):mutationRate,
     batchMs,
-    rescueAttempts:orderSize>120?4:6,
-    refillCandidates:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
-    refillPasses:3,
+    rescueAttempts:hugeLocal?2:(orderSize>120?4:6),
+    refillCandidates:hugeLocal?4:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
+    refillPasses:hugeLocal?1:3,
     refillSheets:999,
-    poolMax:local?(q.mode==="max"?16:14):(q.mode==="max"?24:20),
-    candidateVariants:q.mode==="max"?(local?3:4):(local?2:3),
-    sheetCandidateMs:local?(q.mode==="max"?10000:(q.mode==="fast"?5000:7500)):(q.mode==="max"?8500:(q.mode==="fast"?3500:6500)),
+    poolMax:local
+      ?(veryLargeLocal?(q.mode==="max"?6:5):(hugeLocal?(q.mode==="max"?8:6):(q.mode==="max"?12:10)))
+      :(q.mode==="max"?24:20),
+    candidateVariants:q.mode==="max"
+      ?(local?(hugeLocal?1:2):4)
+      :(local?(hugeLocal?1:1):3),
+    sheetCandidateMs:local
+      ?(hugeLocal
+        ?(q.mode==="max"?3000:(q.mode==="fast"?1400:1800))
+        :(q.mode==="max"?6000:(q.mode==="fast"?2800:4200)))
+      :(q.mode==="max"?8500:(q.mode==="fast"?3500:6500)),
     sheetPenalty:q.mode==="max"?2.8:2.4,
     fillWeight:q.mode==="max"?1.7:1.5,
     densePlacementScoring:true,
-    secondOrientationThreshold:0.72,
+    secondOrientationThreshold:hugeLocal?1:0.72,
     local
   };
 }
@@ -1191,103 +1203,6 @@ function updateProgress(){
 }
 
 
-function directSinglePartCandidate(sheet,instance,runId){
-  if(!instance||!instance.instanceId||!state.running||runId!==state.runId)return null;
-  const expected=nestingUnitCount([instance]);
-  if(expected!==1)return null;
-  try{
-    const nestingSvg=buildNestingSvgForInstances(sheet.w,sheet.h,[instance]);
-    const doc=new DOMParser().parseFromString(nestingSvg,"image/svg+xml");
-    const root=doc.documentElement;
-    const staged=root&&root.querySelector("[data-sheetnest-stage-instance]");
-    if(!staged)return null;
-    const margin=Math.max(0,readNumber("margin",10));
-    const usableW=Math.max(1,sheet.w-2*margin);
-    const usableH=Math.max(1,sheet.h-2*margin);
-    const bounds=instance.kind==="custom"?estimateSvgBounds(instance.part.svgText):{width:instance.shape?.w||1,height:instance.shape?.h||1};
-    const requestedRotations=Math.max(1,Math.floor(readNumber("rotations",2)));
-    const angles=[];
-    if(requestedRotations<=1)angles.push(0);
-    else for(let i=0;i<requestedRotations;i++)angles.push(i*(360/requestedRotations));
-    let chosen=null;
-    for(const angle of angles){
-      const a=Math.abs(angle)*Math.PI/180,c=Math.abs(Math.cos(a)),s=Math.abs(Math.sin(a));
-      const corners=[[0,0],[bounds.width,0],[0,bounds.height],[bounds.width,bounds.height]].map(p=>({
-        x:p[0]*Math.cos(angle*Math.PI/180)-p[1]*Math.sin(angle*Math.PI/180),
-        y:p[0]*Math.sin(angle*Math.PI/180)+p[1]*Math.cos(angle*Math.PI/180)
-      }));
-      const minX=Math.min(...corners.map(p=>p.x)),maxX=Math.max(...corners.map(p=>p.x));
-      const minY=Math.min(...corners.map(p=>p.y)),maxY=Math.max(...corners.map(p=>p.y));
-      const rw=maxX-minX,rh=maxY-minY;
-      if(rw<=usableW+1e-6&&rh<=usableH+1e-6){
-        chosen={angle,minX,minY,rw,rh};
-        break;
-      }
-    }
-    if(!chosen)return null;
-
-    const ns="http://www.w3.org/2000/svg";
-    const result=document.createElementNS(ns,"svg");
-    result.setAttribute("xmlns",ns);
-    result.setAttribute("viewBox","0 0 "+sheet.w+" "+sheet.h);
-    result.setAttribute("width",String(sheet.w));
-    result.setAttribute("height",String(sheet.h));
-    result.setAttribute("preserveAspectRatio","xMidYMid meet");
-    const bin=document.createElementNS(ns,"rect");
-    bin.setAttribute("id","sheet-bin");
-    bin.setAttribute("x","0");bin.setAttribute("y","0");
-    bin.setAttribute("width",String(sheet.w));bin.setAttribute("height",String(sheet.h));
-    bin.setAttribute("fill","#b8c1ca");bin.setAttribute("fill-opacity","0.92");
-    bin.setAttribute("stroke","#687481");bin.setAttribute("stroke-width","0.9");
-    result.appendChild(bin);
-
-    const group=document.createElementNS(ns,"g");
-    const unitId=instance.instanceId+":unit-1";
-    group.setAttribute("data-sheetnest-unit-id",unitId);
-    group.setAttribute("data-sheetnest-source-instance-id",instance.instanceId);
-    const stagedTransform=staged.getAttribute("transform")||"";
-    const tx=margin-chosen.minX,ty=margin-chosen.minY;
-    group.setAttribute("transform","translate("+tx+" "+ty+") rotate("+chosen.angle+") "+stagedTransform);
-    Array.from(staged.children).forEach(child=>{
-      const clone=child.cloneNode(true);
-      clone.removeAttribute("data-sheetnest-unit-id");
-      group.appendChild(clone);
-    });
-    result.appendChild(group);
-    result.setAttribute("data-sheet-w",String(sheet.w));
-    result.setAttribute("data-sheet-h",String(sheet.h));
-
-    const entry=state.instanceDiagnostics?.[instance.instanceId];
-    if(entry){
-      entry.unitIds=[unitId];
-      entry.parsed=true;
-      entry.staged=true;
-      entry.status="parsed";
-      entry.stage="Прямое размещение";
-      entry.issue="Одиночная деталь помещена без NFP.";
-      state.unitToInstance[unitId]=instance.instanceId;
-    }
-    const validation=validateNestingResult([result],1,1);
-    if(!validation.valid)return null;
-    state.searchFrames++;
-    updateDiagnosticsFromCandidate([result],true,state.searchFrames,validation,true);
-    const sheetArea=Math.max(1,usableW*usableH);
-    const fill=Math.min(1,Math.max(0,estimateInstanceAreaForPool(instance)/sheetArea));
-    return {
-      results:[result],
-      efficiency:fill,
-      placed:1,
-      total:1,
-      sheet:{w:sheet.w,h:sheet.h},
-      frame:state.searchFrames,
-      validation
-    };
-  }catch(err){
-    console.warn("SheetNest direct single-part placement failed",err);
-    return null;
-  }
-}
-
 function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=null){
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
   const perf=runtimeConfig||adaptiveNestingConfig(activeInstances.length);
@@ -1300,7 +1215,7 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
   markDiagnosticsStaged(nestingSvg,scopeIds);
 
   if(activeInstances.length===1&&expectedTotal===1){
-    const direct=directSinglePartCandidate(sheet,activeInstances[0],runId);
+    const direct=buildDirectSingleSheetCandidate(activeInstances[0],sheet,runId);
     if(direct){
       renderResults(direct.results,direct.efficiency,direct.placed,direct.total,sheet,{mode:"search",frame:direct.frame,isBest:true});
       state.lastValidation=direct.validation;
@@ -1874,11 +1789,14 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
     }
   }
   const initialSize=Math.min(estimateProgressivePoolSize(remaining,orientations[0],perf),remaining.length);
-  const sizes=[initialSize,Math.min(16,remaining.length),Math.min(12,remaining.length),Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)]
+  const fastLocal=Boolean(perf.local&&remaining.length>28);
+  const sizes=(fastLocal
+    ?[initialSize,Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)]
+    :[initialSize,Math.min(16,remaining.length),Math.min(12,remaining.length),Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)])
     .filter((n,i,a)=>n>0&&a.indexOf(n)===i);
   let best=null;
   let attempted=0;
-  const maxAttempts=perf.local?12:12;
+  const maxAttempts=fastLocal?(remaining.length>80?4:6):12;
 
   for(const size of sizes){
     const remainingAttempts=maxAttempts-attempted;
@@ -1889,7 +1807,7 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
       for(const orientation of orientations){
         if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
         attempted++;
-        const budget=Math.max(1800,Number(perf.sheetCandidateMs)||6000);
+        const budget=Math.max(1400,Number(perf.sheetCandidateMs)||3000);
         const runBest=await startOneRun(orientation,budget,runId,pool,perf);
         if(!runBest?.results?.length)continue;
         const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
@@ -1928,7 +1846,7 @@ async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,re
   const refill=await refillCommittedSheets(
     committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,
     Math.max(1600,Number(perf.sheetCandidateMs)||3000),perf,
-    {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(8,Number(perf.refillCandidates||10)+4),24),maxPasses:2,maxSheets:1}
+    {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(4,Number(perf.refillCandidates||6)),12),maxPasses:Math.max(1,Number(perf.refillPasses)||1),maxSheets:1}
   );
   remaining=refill.remaining;
   return {remaining,committed:true,sheetIndex};
