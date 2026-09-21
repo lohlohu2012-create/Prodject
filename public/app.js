@@ -1124,7 +1124,12 @@ async function runSearch(){
 
       // Любые экземпляры, которые не вошли в пакетный результат, пробуем отдельно.
       // Это гарантирует, что частичный результат одной группы не похоронит оставшиеся детали.
-      const leftovers=batch.filter(item=>!batchPlaced.has(item.instanceId));
+      const alreadyPlacedUnits=placedUnitIdsFromResults(finalResults);
+      const leftovers=batch.filter(item=>{
+        if(batchPlaced.has(item.instanceId))return false;
+        const entry=state.instanceDiagnostics?.[item.instanceId];
+        return !(entry?.unitIds||[]).some(unitId=>alreadyPlacedUnits.has(unitId));
+      });
       if(leftovers.length){
         for(const single of leftovers){
           if(!state.running)break;
