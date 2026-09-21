@@ -1381,6 +1381,36 @@ async function runSearch(options={}){
 
   try{
     while(remaining.length&&state.running&&loopGuard++<Math.max(20,allInstances.length*4)){
+      // Не открываем новый лист, пока на уже открытых листах есть шанс
+      // разместить оставшиеся детали. Проверяем самые пустые листы первыми.
+      if(committedSheets.length&&remaining.length){
+        const beforePrefill=usedUnitIds.size;
+        const prefill=await refillCommittedSheets(
+          committedSheets,
+          remaining,
+          usedUnitIds,
+          allInstances,
+          orientations,
+          runId,
+          batchRunMs,
+          perf,
+          {
+            candidateLimit:Math.max(8,Math.min(perf.refillCandidates,batchSize)),
+            maxPasses:1,
+            maxSheets:6
+          }
+        );
+        remaining=prefill.remaining;
+        if(usedUnitIds.size>beforePrefill){
+          stallRounds=0;
+          deferredIds.clear();
+          $("runInfo").textContent="Дозаполнение существующих листов · осталось "+remaining.length+" экземпляров";
+          $("progressBar").style.width=Math.round(Math.min(.78,usedUnitIds.size/Math.max(1,totalUnits)*.78)*100)+"%";
+          await new Promise(resolve=>setTimeout(resolve,0));
+          continue;
+        }
+      }
+
       if(deferredIds.size>=remaining.length){
         // Все оставшиеся детали уже получали отдельную неудачную попытку.
         // Делаем ещё один полный цикл другим порядком, но ничего не удаляем.
