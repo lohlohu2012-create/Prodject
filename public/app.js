@@ -73,37 +73,100 @@ function updateSheetPreview(){
 }
 
 const SHAPE_LIBRARY=[
-  {id:"rect",name:"Прямоугольник",size:"200 × 100 мм",w:200,h:100,kind:"rect"},
-  {id:"square",name:"Квадрат",size:"120 × 120 мм",w:120,h:120,kind:"square"},
-  {id:"circle",name:"Круг",size:"Ø 100 мм",w:100,h:100,kind:"circle"},
-  {id:"triangle",name:"Треугольник",size:"140 × 120 мм",w:140,h:120,kind:"triangle"},
-  {id:"hex",name:"Шестиугольник",size:"120 × 104 мм",w:120,h:104,kind:"hex"},
-  {id:"roundrect",name:"Скруглённый прямоугольник",size:"220 × 100 мм",w:220,h:100,kind:"roundrect"}
+  {id:"rect",name:"Прямоугольник",kind:"rect",params:["w","h"],w:200,h:100,size:"200 × 100 мм"},
+  {id:"square",name:"Квадрат",kind:"square",params:["side"],side:120,w:120,h:120,size:"120 × 120 мм"},
+  {id:"circle",name:"Круг",kind:"circle",params:["diameter"],diameter:100,w:100,h:100,size:"Ø 100 мм"},
+  {id:"triangle",name:"Треугольник",kind:"triangle",params:["w","h"],w:140,h:120,size:"140 × 120 мм"},
+  {id:"hex",name:"Шестиугольник",kind:"hex",params:["w","h"],w:120,h:104,size:"120 × 104 мм"},
+  {id:"roundrect",name:"Скруглённый прямоугольник",kind:"roundrect",params:["w","h","radius"],w:220,h:100,radius:20,size:"220 × 100 мм · R20"}
 ];
 
+function clampShapeNumber(value,min=1,max=9999){
+  const n=Number(value);
+  return Number.isFinite(n)?Math.max(min,Math.min(max,n)):min;
+}
+function getShapeDefinition(shapeId){
+  return SHAPE_LIBRARY.find(item=>item.id===shapeId)||null;
+}
+function libraryPartShape(part){
+  const base=getShapeDefinition(part?.shapeId||part?.id);
+  if(!base)return null;
+  const shape={...base};
+  if(base.kind==="square"){
+    const side=clampShapeNumber(part?.side??base.side);
+    shape.side=side;shape.w=side;shape.h=side;
+  }else if(base.kind==="circle"){
+    const diameter=clampShapeNumber(part?.diameter??base.diameter);
+    shape.diameter=diameter;shape.w=diameter;shape.h=diameter;
+  }else{
+    shape.w=clampShapeNumber(part?.w??base.w);
+    shape.h=clampShapeNumber(part?.h??base.h);
+  }
+  if(base.kind==="roundrect"){
+    shape.radius=clampShapeNumber(part?.radius??base.radius,0,Math.min(shape.w,shape.h)/2);
+  }
+  shape.size=shapeSizeText(shape);
+  return shape;
+}
+function shapeSizeText(shape){
+  if(!shape)return"";
+  if(shape.kind==="circle")return"Ø "+Math.round(shape.diameter)+" мм";
+  if(shape.kind==="square")return Math.round(shape.side)+" × "+Math.round(shape.side)+" мм";
+  if(shape.kind==="roundrect")return Math.round(shape.w)+" × "+Math.round(shape.h)+" мм · R"+Math.round(shape.radius);
+  return Math.round(shape.w)+" × "+Math.round(shape.h)+" мм";
+}
+function shapeControlField(key,value,label,unit="мм"){
+  return "<label class='shape-param'><span>"+escapeHtml(label)+"</span><div class='input-suffix'><input type='number' data-shape-param='"+key+"' min='0.5' max='9999' step='0.5' value='"+Number(value)+"'><em>"+unit+"</em></div></label>";
+}
+function shapeControlsHtml(shape){
+  const fields=[];
+  if(shape.kind==="square")fields.push(shapeControlField("side",shape.side,"Сторона"));
+  else if(shape.kind==="circle")fields.push(shapeControlField("diameter",shape.diameter,"Диаметр"));
+  else{
+    fields.push(shapeControlField("w",shape.w,"Ширина"));
+    fields.push(shapeControlField("h",shape.h,"Высота"));
+    if(shape.kind==="roundrect")fields.push(shapeControlField("radius",shape.radius,"Радиус"));
+  }
+  return "<div class='shape-param-grid'>"+fields.join("")+"</div>";
+}
+
 function roundedRectPath(w,h,r){
+  const rr=Math.max(0,Math.min(r,Math.min(w,h)/2));
+  if(rr<=0)return "M0 0 L"+w+" 0 L"+w+" "+h+" L0 "+h+" Z";
   const points=[];
-  const corners=[[w-r,r,Math.PI*1.5,Math.PI*2],[w-r,h-r,0,Math.PI/2],[r,h-r,Math.PI/2,Math.PI],[r,r,Math.PI,Math.PI*1.5]];
+  const corners=[[w-rr,rr,Math.PI*1.5,Math.PI*2],[w-rr,h-rr,0,Math.PI/2],[rr,h-rr,Math.PI/2,Math.PI],[rr,rr,Math.PI,Math.PI*1.5]];
   corners.forEach(corner=>{
-    const cx=corner[0],cy=corner[1],a0=corner[2],a1=corner[3],steps=4;
-    for(let i=0;i<=steps;i++){const a=a0+(a1-a0)*i/steps;points.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)})}
+    const cx=corner[0],cy=corner[1],a0=corner[2],a1=corner[3],steps=5;
+    for(let i=0;i<=steps;i++){
+      const a=a0+(a1-a0)*i/steps;
+      points.push({x:cx+rr*Math.cos(a),y:cy+rr*Math.sin(a)});
+    }
   });
   return "M "+points.map(p=>p.x.toFixed(2)+" "+p.y.toFixed(2)).join(" L ")+" Z";
 }
 
-function shapePath(shape){
-  if(shape.kind==="rect")return "M0 0 L200 0 L200 100 L0 100 Z";
-  if(shape.kind==="square")return "M0 0 L120 0 L120 120 L0 120 Z";
-  if(shape.kind==="triangle")return "M0 120 L70 0 L140 120 Z";
-  if(shape.kind==="hex")return "M25 0 L95 0 L120 52 L95 104 L25 104 L0 52 Z";
-  if(shape.kind==="roundrect")return roundedRectPath(220,100,20);
-  const points=[];
-  for(let i=0;i<48;i++){const angle=-Math.PI/2+i*(Math.PI*2/48);points.push({x:50+50*Math.cos(angle),y:50+50*Math.sin(angle)})}
+function shapePath(shapeOrPart){
+  const shape=(shapeOrPart?.shapeId||shapeOrPart?.kind?libraryPartShape(shapeOrPart)||shapeOrPart:shapeOrPart)||{};
+  const w=Math.max(1,Number(shape.w)||100),h=Math.max(1,Number(shape.h)||100);
+  if(shape.kind==="rect")return "M0 0 L"+w+" 0 L"+w+" "+h+" L0 "+h+" Z";
+  if(shape.kind==="square")return "M0 0 L"+w+" 0 L"+w+" "+h+" L0 "+h+" Z";
+  if(shape.kind==="triangle")return "M0 "+h+" L"+(w/2)+" 0 L"+w+" "+h+" Z";
+  if(shape.kind==="hex"){
+    const inset=w*0.208333;
+    return "M"+inset+" 0 L"+(w-inset)+" 0 L"+w+" "+(h/2)+" L"+(w-inset)+" "+h+" L"+inset+" "+h+" L0 "+(h/2)+" Z";
+  }
+  if(shape.kind==="roundrect")return roundedRectPath(w,h,Number(shape.radius)||0);
+  const r=(Number(shape.diameter)||Math.min(w,h))/2,cx=w/2,cy=h/2,points=[];
+  for(let i=0;i<64;i++){
+    const angle=-Math.PI/2+i*(Math.PI*2/64);
+    points.push({x:cx+r*Math.cos(angle),y:cy+r*Math.sin(angle)});
+  }
   return "M "+points.map(p=>p.x.toFixed(2)+" "+p.y.toFixed(2)).join(" L ")+" Z";
 }
-
-function shapePreview(shape){
-  return "<svg viewBox=\"0 0 "+shape.w+" "+shape.h+"\" aria-hidden=\"true\"><path d=\""+shapePath(shape)+"\"/></svg>";
+function shapePreview(shapeOrPart){
+  const shape=(shapeOrPart?.shapeId||shapeOrPart?.kind?libraryPartShape(shapeOrPart)||shapeOrPart:shapeOrPart);
+  if(!shape)return"";
+  return "<svg viewBox='0 0 "+shape.w+" "+shape.h+"' aria-hidden='true'><path d='"+shapePath(shape)+"'/></svg>";
 }
 function normalizedQuantity(part){return Math.max(1,Math.min(9999,Math.floor(Number(part&&part.quantity)||1)))}
 function partNestingUnits(part){return Math.max(1,Math.floor(Number(part&&part.nestingUnits)||1))}
@@ -143,8 +206,8 @@ function createNestingManifest(){
   const manifest=[];
   state.customParts.forEach(part=>manifest.push({id:part.id,name:part.name,type:"cad",quantity:normalizedQuantity(part),units:partNestingUnits(part)}));
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
-    if(shape)manifest.push({id:part.id,name:shape.name,type:"library",quantity:normalizedQuantity(part),units:1});
+    const shape=libraryPartShape(part);
+    if(shape)manifest.push({id:part.id,name:shape.name,type:"library",quantity:normalizedQuantity(part),units:1,geometry:shape.size});
   });
   return manifest;
 }
@@ -181,7 +244,7 @@ function updateGeometryInfo(){
   if(!chip)return;
   const bits=[];
   if(state.customParts.length)bits.push(...state.customParts.map(part=>part.name+" × "+part.quantity+" · "+partNestingUnits(part)+" дет./экз."));
-  if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);return (shape?shape.name:part.id)+" × "+part.quantity;}));
+  if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=libraryPartShape(part);return (shape?shape.name+" "+shape.size:part.id)+" × "+part.quantity;}));
   if(fileLine)fileLine.textContent=state.customParts.length?state.customParts.length+" CAD-файл(ов): "+state.customParts.map(part=>part.name).join(", "):"Файл не выбран";
   const partsTotal=$("partsTotal");if(partsTotal)partsTotal.textContent=requestedPartCount();
   if(!bits.length){chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";return;}
