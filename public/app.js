@@ -1,3 +1,4 @@
+const SHEETNEST_ENGINE_BUILD="20260921-nfp-fallback-v2";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
@@ -1025,6 +1026,18 @@ function markDiagnosticsStaged(svgText,scopeIds=null){
   });
   renderDiagnosticsPanel();
 }
+function resetDiagnosticsForAttempt(scopeIds){
+  const scope=scopeIds?new Set(scopeIds):null;
+  diagnosticEntries().forEach(entry=>{
+    if(scope&&!scope.has(entry.instanceId))return;
+    (entry.unitIds||[]).forEach(unitId=>{
+      if(state.unitToInstance[unitId]===entry.instanceId)delete state.unitToInstance[unitId];
+    });
+    entry.unitIds=[];
+    entry.parsed=false;
+  });
+}
+
 function registerParsedUnits(parsed,scopeIds=null){
   const elements=Array.from(parsed.querySelectorAll("[data-sheetnest-unit-id]"));
   const parsedByInstance={};
@@ -1282,6 +1295,7 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
   resetEngine(perf);
   const expectedTotal=nestingUnitCount(activeInstances);
   const scopeIds=activeInstances.map(item=>item.instanceId);
+  resetDiagnosticsForAttempt(scopeIds);
   const nestingSvg=buildNestingSvgForInstances(sheet.w,sheet.h,activeInstances);
   markDiagnosticsStaged(nestingSvg,scopeIds);
 
@@ -1781,7 +1795,84 @@ function preflightNestingInstances(instances,orientations){
   });
   return {fit,blocked};
 }
+function buildDirectSingleSheetCandidate(instance,sheet,runId){
+  if(!instance||!state.running||runId!==state.runId||nestingUnitCount([instance])!==1)return null;
+  try{
+    const margin=Math.max(0,readNumber("margin",10));
+    const usableW=Math.max(1,sheet.w-2*margin);
+    const usableH=Math.max(1,sheet.h-2*margin);
+    const source=instance.kind==="custom"?instance.part.svgText:null;
+    const bounds=instance.kind==="custom"?estimateSvgBounds(source):{minX:0,minY:0,width:Number(instance.shape?.w)||1,height:Number(instance.shape?.h)||1};
+    const rotations=Math.max(1,Math.floor(readNumber("rotations",2)));
+    const angles=rotations===1?[0]:Array.from({length:rotations},(_,i)=>i*(360/rotations));
+    let fit=null;
+    for(const angle of angles){
+      const r=angle*Math.PI/180,c=Math.cos(r),s=Math.sin(r);
+      const pts=[[bounds.minX,bounds.minY],[bounds.minX+bounds.width,bounds.minY],[bounds.minX,bounds.minY+bounds.height],[bounds.minX+bounds.width,bounds.minY+bounds.height]]
+        .map(([x,y])=>({x:x*c-y*s,y:x*s+y*c}));
+      const minX=Math.min(...pts.map(p=>p.x)),maxX=Math.max(...pts.map(p=>p.x));
+      const minY=Math.min(...pts.map(p=>p.y)),maxY=Math.max(...pts.map(p=>p.y));
+      if(maxX-minX+readNumber("gap",2)<=usableW+1e-6&&maxY-minY+readNumber("gap",2)<=usableH+1e-6){
+        fit={angle,minX,minY};break;
+      }
+    }
+    if(!fit)return null;
+    const ns="http://www.w3.org/2000/svg";
+    const svg=document.createElementNS(ns,"svg");
+    svg.setAttribute("xmlns",ns);svg.setAttribute("viewBox","0 0 "+sheet.w+" "+sheet.h);
+    svg.setAttribute("width",String(sheet.w));svg.setAttribute("height",String(sheet.h));svg.setAttribute("preserveAspectRatio","xMidYMid meet");
+    const bin=document.createElementNS(ns,"rect");
+    bin.setAttribute("id","sheet-bin");bin.setAttribute("x","0");bin.setAttribute("y","0");
+    bin.setAttribute("width",String(sheet.w));bin.setAttribute("height",String(sheet.h));
+    bin.setAttribute("fill","#b8c1ca");bin.setAttribute("fill-opacity","0.92");bin.setAttribute("stroke","#687481");bin.setAttribute("stroke-width","0.9");
+    svg.appendChild(bin);
+    const group=document.createElementNS(ns,"g");
+    const unitId=instance.instanceId+":unit-1";
+    group.setAttribute("data-sheetnest-unit-id",unitId);
+    group.setAttribute("data-sheetnest-source-instance-id",instance.instanceId);
+    group.setAttribute("transform","translate("+(margin-fit.minX)+" "+(margin-fit.minY)+") rotate("+fit.angle+")");
+    if(instance.kind==="custom"){
+      const doc=new DOMParser().parseFromString(source,"image/svg+xml");
+      const root=doc.documentElement;
+      Array.from(root?.children||[]).filter(node=>!["defs","style","title","desc","metadata","script"].includes(String(node.tagName||"").toLowerCase()))
+        .forEach(node=>{const clone=node.cloneNode(true);stampNestingSource(clone,instance.instanceId,instance.part.id);group.appendChild(clone)});
+    }else{
+      const path=document.createElementNS(ns,"path");
+      path.setAttribute("d",shapePath(instance.shape));path.setAttribute("fill","#aeb8c2");path.setAttribute("fill-opacity","0.72");
+      path.setAttribute("stroke","#313a44");path.setAttribute("stroke-width",".9");stampNestingSource(path,instance.instanceId,instance.shape.id);group.appendChild(path);
+    }
+    svg.appendChild(group);
+    svg.setAttribute("data-sheet-w",String(sheet.w));svg.setAttribute("data-sheet-h",String(sheet.h));
+    const entry=state.instanceDiagnostics?.[instance.instanceId];
+    if(entry){
+      (entry.unitIds||[]).forEach(id=>{if(state.unitToInstance[id]===instance.instanceId)delete state.unitToInstance[id]});
+      entry.unitIds=[unitId];entry.parsed=true;entry.staged=true;entry.status="parsed";entry.stage="Прямое размещение";entry.issue="Размещено аварийным геометрическим fallback без NFP.";
+      state.unitToInstance[unitId]=instance.instanceId;
+    }
+    const validation=validateNestingResult([svg],1,1);
+    if(!validation.valid)return null;
+    state.searchFrames++;
+    updateDiagnosticsFromCandidate([svg],true,state.searchFrames,validation,true);
+    return {results:[svg],efficiency:Math.min(1,estimateInstanceAreaForPool(instance)/Math.max(1,usableW*usableH)),placed:1,total:1,sheet,frame:state.searchFrames,validation};
+  }catch(err){
+    console.warn("SheetNest single-part direct fallback:",err);
+    return null;
+  }
+}
+
 async function searchBestNextSheet(remaining,allInstances,orientations,runId,perf,usedUnitIds){
+  if(Array.isArray(remaining)&&remaining.length===1){
+    for(const orientation of orientations||[]){
+      const direct=buildDirectSingleSheetCandidate(remaining[0],orientation,runId);
+      if(direct){
+        const candidate=chooseBestNestingSheet(direct.results,usedUnitIds,allInstances,orientation);
+        if(candidate){
+          candidate.orientation=orientation;candidate.poolSize=1;candidate.frame=direct.frame;candidate.attemptError=null;
+          return {best:candidate,attempted:0,initialPoolSize:1};
+        }
+      }
+    }
+  }
   const initialSize=Math.min(estimateProgressivePoolSize(remaining,orientations[0],perf),remaining.length);
   const sizes=[initialSize,Math.min(16,remaining.length),Math.min(12,remaining.length),Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)]
     .filter((n,i,a)=>n>0&&a.indexOf(n)===i);
@@ -1933,6 +2024,24 @@ async function runSearch(options={}){
       // Последняя попытка — одиночные элементы, чтобы не считать деталь
       // потерянной только из-за неудачного большого NFP-пакета.
       stallCount++;
+      const directRescueLimit=Math.min(8,remaining.length);
+      let directRescued=false;
+      for(let ri=0;ri<directRescueLimit;ri++){
+        const item=remaining[ri];
+        for(const orientation of orientations){
+          const direct=buildDirectSingleSheetCandidate(item,orientation,runId);
+          if(!direct)continue;
+          const candidate=chooseBestNestingSheet(direct.results,usedUnitIds,allInstances,orientation);
+          if(!candidate)continue;
+          candidate.orientation=orientation;candidate.poolSize=1;
+          const committed=await commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf);
+          remaining=committed.remaining;
+          if(committed.committed){sheetNo++;directRescued=true;break;}
+        }
+        if(directRescued)break;
+      }
+      if(directRescued)continue;
+
       const rescue=selectNestingBatch(remaining,Math.min(6,remaining.length),stallCount%2?"small":"large");
       let rescued=false;
       for(const item of rescue){
@@ -2175,6 +2284,7 @@ function exportBenchmarkJSON(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
+try{document.documentElement.dataset.sheetnestBuild=SHEETNEST_ENGINE_BUILD;console.info("SheetNest build",SHEETNEST_ENGINE_BUILD)}catch(_){}
 $("fileInput").addEventListener("change",async event=>{
   const files=Array.from(event.target.files||[]);if(!files.length)return;
   status("Загрузка CAD…");const imported=[],failed=[];
