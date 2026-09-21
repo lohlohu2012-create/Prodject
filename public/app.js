@@ -1265,6 +1265,8 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
         $("runInfo").textContent="Дозаполнение листа "+(sheetIndex+1)+" · добавлено "+bestAdded+" деталей";
         await new Promise(resolve=>setTimeout(resolve,0));
       }
+    }
+
     if(!changedThisPass)break;
   }
 
@@ -1412,7 +1414,7 @@ async function runSearch(){
     }
 
     let extraPass=0;
-    while(state.running&&remaining.length&&extraPass++<3){
+    while(state.running&&remaining.length&&extraPass++<1){
       const before=usedUnitIds.size;
       const pool=selectNestingBatch(remaining,Math.min(batchSize,18),extraPass%2?"small":"large");
       const candidate=await runPoolAcrossOrientations(pool,orientations,runId,Math.max(2200,Math.min(batchRunMs,perf.mode==="max"?4500:3200)),perf);
