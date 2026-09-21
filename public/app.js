@@ -250,20 +250,87 @@ function updateGeometryInfo(){
   if(!bits.length){chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";return;}
   chip.innerHTML="<span class=\"chip-dot\"></span><span>"+escapeHtml(bits.join(" · "))+"</span>";
 }
+function applyShapeInputs(target,container){
+  if(!target||!container)return target;
+  container.querySelectorAll("[data-shape-param]").forEach(input=>{
+    const key=input.getAttribute("data-shape-param");
+    if(key)target[key]=clampShapeNumber(input.value);
+  });
+  if(target.kind==="square"){
+    target.side=clampShapeNumber(target.side);
+    target.w=target.side;target.h=target.side;
+  }else if(target.kind==="circle"){
+    target.diameter=clampShapeNumber(target.diameter);
+    target.w=target.diameter;target.h=target.diameter;
+  }else{
+    target.w=clampShapeNumber(target.w);target.h=clampShapeNumber(target.h);
+  }
+  if(target.kind==="roundrect")target.radius=clampShapeNumber(target.radius,0,Math.min(target.w,target.h)/2);
+  return target;
+}
+function updateShapePreviewInCard(card,draft){
+  const shape=libraryPartShape(draft)||draft;
+  const thumb=card.querySelector(".shape-thumb");
+  const size=card.querySelector(".shape-card-size");
+  if(thumb)thumb.innerHTML=shapePreview(shape);
+  if(size)size.textContent=shapeSizeText(shape);
+}
+function makeLibraryPart(shape,draft,quantity){
+  const geometry={shapeId:shape.id,kind:shape.kind,w:shape.w,h:shape.h,side:draft.side,diameter:draft.diameter,radius:draft.radius};
+  return {
+    id:"libpart-"+shape.id+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),
+    ...geometry,
+    quantity:Math.max(1,Math.min(9999,Math.floor(Number(quantity)||1))),
+    nestingUnits:1,contours:1,holes:0
+  };
+}
+function sameLibraryGeometry(a,b){
+  return a&&b&&(a.shapeId||a.id)===(b.shapeId||b.id)
+    && Math.abs(Number(a.w||0)-Number(b.w||0))<0.001
+    && Math.abs(Number(a.h||0)-Number(b.h||0))<0.001
+    && Math.abs(Number(a.side||0)-Number(b.side||0))<0.001
+    && Math.abs(Number(a.diameter||0)-Number(b.diameter||0))<0.001
+    && Math.abs(Number(a.radius||0)-Number(b.radius||0))<0.001;
+}
+function selectedLibraryPartHtml(part){
+  const shape=libraryPartShape(part);
+  if(!shape)return"";
+  return "<div class='selected-part-thumb'>"+shapePreview(shape)+"</div>"+
+    "<div class='selected-part-info'><b>"+escapeHtml(shape.name)+"</b><small>Типовая · "+escapeHtml(shape.size)+"</small></div>"+
+    "<div class='selected-part-controls'><div class='selected-part-settings'>"+shapeControlsHtml(shape)+"</div>"+
+    "<input class='selected-part-qty' type='number' min='1' max='9999' step='1' value='"+normalizedQuantity(part)+"' aria-label='Количество "+escapeHtml(shape.name)+"'>"+
+    "<button class='selected-part-remove' type='button' title='Удалить' aria-label='Удалить "+escapeHtml(shape.name)+"'>×</button></div>";
+}
+function bindLibraryPartCard(item,part){
+  item.querySelector(".selected-part-qty")?.addEventListener("change",event=>{
+    part.quantity=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));
+    event.target.value=String(part.quantity);
+    updateGeometryInfo();
+  });
+  item.querySelectorAll("[data-shape-param]").forEach(input=>{
+    input.addEventListener("change",()=>{
+      applyShapeInputs(part,item);
+      renderSelectedShapes();
+      updateGeometryInfo();
+    });
+  });
+  item.querySelector(".selected-part-remove")?.addEventListener("click",()=>{
+    state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);
+    renderSelectedShapes();updateGeometryInfo();
+  });
+}
 function renderSelectedShapes(){
   const wrap=$("selectedParts"),empty=$("selectedPartsEmpty");if(!wrap||!empty)return;
   wrap.querySelectorAll(".selected-part").forEach(node=>node.remove());
   const hasParts=state.customParts.length||state.libraryParts.length;empty.style.display=hasParts?"none":"block";
   state.customParts.forEach(addCustomPartCard);
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
-    const item=document.createElement("div");item.className="selected-part";item.dataset.shapeId=part.id;
-    item.innerHTML="<div class=\"selected-part-thumb\">"+shapePreview(shape)+"</div><div class=\"selected-part-info\"><b>"+escapeHtml(shape.name)+"</b><small>Типовая · "+escapeHtml(shape.size)+"</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+part.quantity+"\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(shape.name)+"\">×</button>";
-    item.querySelector(".selected-part-qty").addEventListener("change",event=>{
-      const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));event.target.value=String(value);
-      const target=state.libraryParts.find(entry=>entry.id===part.id);if(target)target.quantity=value;updateGeometryInfo();
-    });
-    item.querySelector(".selected-part-remove").addEventListener("click",()=>{state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);renderSelectedShapes();updateGeometryInfo()});
+    const shape=libraryPartShape(part);if(!shape)return;
+    const item=document.createElement("div");
+    item.className="selected-part selected-part-library";
+    item.dataset.partId=part.id;
+    item.innerHTML=selectedLibraryPartHtml(part);
+    bindLibraryPartCard(item,part);
     wrap.appendChild(item);
   });
 }
@@ -272,20 +339,35 @@ function setupShapeLibrary(){
   if(!library||library.dataset.ready==="1")return;
   library.dataset.ready="1";library.innerHTML="";
   SHAPE_LIBRARY.forEach(shape=>{
+    const draft={...shape};
     const card=document.createElement("article");
     card.className="shape-card";
-    card.innerHTML="<div class=\"shape-thumb\">"+shapePreview(shape)+"</div><div class=\"shape-card-copy\"><b>"+escapeHtml(shape.name)+"</b><small>"+escapeHtml(shape.size)+"</small></div><div class=\"shape-card-actions\"><input class=\"shape-card-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\"1\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"shape-add\" type=\"button\" title=\"Добавить в раскрой\" aria-label=\"Добавить "+escapeHtml(shape.name)+"\">+</button></div>";
+    card.innerHTML="<div class='shape-thumb'>"+shapePreview(draft)+"</div>"+
+      "<div class='shape-card-copy'><b>"+escapeHtml(shape.name)+"</b><small class='shape-card-size'>"+escapeHtml(shape.size)+"</small></div>"+
+      "<div class='shape-card-params'>"+shapeControlsHtml(draft)+"</div>"+
+      "<div class='shape-card-actions'><input class='shape-card-qty' type='number' min='1' max='9999' step='1' value='1' aria-label='Количество "+escapeHtml(shape.name)+"'>"+
+      "<button class='shape-add' type='button' title='Добавить в раскрой' aria-label='Добавить "+escapeHtml(shape.name)+"'>+</button></div>";
+    card.querySelectorAll("[data-shape-param]").forEach(input=>{
+      input.addEventListener("input",()=>{
+        applyShapeInputs(draft,card);
+        updateShapePreviewInCard(card,draft);
+      });
+    });
     card.querySelector(".shape-add").addEventListener("click",()=>{
-      const input=card.querySelector(".shape-card-qty");
-      const quantity=Math.max(1,Math.min(9999,Math.floor(Number(input.value)||1)));
-      input.value="1";
-      const existing=state.libraryParts.find(entry=>entry.id===shape.id);
-      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);else state.libraryParts.push({id:shape.id,quantity,nestingUnits:1,contours:1,holes:0});
+      applyShapeInputs(draft,card);
+      const quantity=Math.max(1,Math.min(9999,Math.floor(Number(card.querySelector(".shape-card-qty").value)||1)));
+      const newPart=makeLibraryPart(shape,draft,quantity);
+      const existing=state.libraryParts.find(entry=>sameLibraryGeometry(entry,newPart));
+      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);
+      else state.libraryParts.push(newPart);
+      card.querySelector(".shape-card-qty").value="1";
       renderSelectedShapes();updateGeometryInfo();status("Фигура добавлена");
     });
     library.appendChild(card);
   });
-  $("clearShapes")?.addEventListener("click",()=>{state.libraryParts=[];renderSelectedShapes();updateGeometryInfo()});
+  $("clearShapes")?.addEventListener("click",()=>{
+    state.libraryParts=[];renderSelectedShapes();updateGeometryInfo();
+  });
   renderSelectedShapes();
 }
 
@@ -308,12 +390,12 @@ function appendCustomParts(root,stage){
 
 function appendLibraryParts(root,stage){
   for(const part of state.libraryParts){
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
+    const shape=libraryPartShape(part);
     if(!shape)continue;
     const d=shapePath(shape);
     const bounds={minX:0,minY:0,width:Math.max(1,shape.w),height:Math.max(1,shape.h)};
     for(let copy=0;copy<normalizedQuantity(part);copy++){
-      const instanceId="library-"+shape.id+"#"+(copy+1);
+      const instanceId="library-"+part.id+"#"+(copy+1);
       const ns="http://www.w3.org/2000/svg",group=document.createElementNS(ns,"g");
       group.setAttribute("data-sheetnest-stage-instance",instanceId);
       group.setAttribute("data-sheetnest-shape",shape.id);
@@ -536,10 +618,10 @@ function buildNestingInstances(){
     }
   });
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
+    const shape=libraryPartShape(part);if(!shape)return;
     const quantity=normalizedQuantity(part);
     for(let copy=1;copy<=quantity;copy++){
-      out.push({instanceId:"library-"+shape.id+"#"+copy,kind:"library",part,shape,copy});
+      out.push({instanceId:"library-"+part.id+"#"+copy,kind:"library",part,shape,copy});
     }
   });
   return out;
@@ -889,9 +971,9 @@ function initializeInstanceDiagnostics(){
     }
   });
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
+    const shape=libraryPartShape(part);if(!shape)return;
     for(let copy=0;copy<normalizedQuantity(part);copy++){
-      const instanceId="library-"+shape.id+"#"+(copy+1);
+      const instanceId="library-"+part.id+"#"+(copy+1);
       state.instanceDiagnostics[instanceId]={
         instanceId,sourceId:shape.id,name:shape.name,type:"Типовая",
         expectedUnits:1,unitIds:[],candidateUnitIds:[],bestCandidateUnitIds:[],finalUnitIds:[],
