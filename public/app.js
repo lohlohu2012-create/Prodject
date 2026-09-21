@@ -753,6 +753,25 @@ function renderDiagnosticsPanel(finalState=false){
   if(jsonButton)jsonButton.disabled=false;
   if(csvButton)csvButton.disabled=false;
 }
+function forceVisibleSheetBin(svg,isSearch){
+  try{
+    const bins=svg?.querySelectorAll("#sheet-bin,.bin")||[];
+    bins.forEach(bin=>{
+      bin.setAttribute("fill","#b8c1ca");
+      bin.setAttribute("fill-opacity",isSearch?"0.92":"1");
+      bin.setAttribute("stroke","#687481");
+      bin.setAttribute("stroke-width","0.9");
+      const style=bin.style;
+      if(style){
+        style.setProperty("fill","#b8c1ca","important");
+        style.setProperty("fill-opacity",isSearch?"0.92":"1","important");
+        style.setProperty("stroke","#687481","important");
+        style.setProperty("stroke-width","0.9","important");
+      }
+    });
+    svg?.setAttribute("preserveAspectRatio","xMidYMid meet");
+  }catch(err){console.warn("SheetNest: forced sheet-bin styling skipped",err)}
+}
 function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",frame:0,isBest:false}){
   const wrap=$("canvasWrap");wrap.innerHTML="";
   const meta={material:$("material").value,thickness:readNumber("thickness",3),sheetW:sheet.w,sheetH:sheet.h,margin:readNumber("margin",10),gap:readNumber("gap",2),efficiency:Number(efficiency||0),placed:Number(placed||0),total:Number(total||0),mode:view.mode,frame:view.frame,isBest:Boolean(view.isBest)};
@@ -763,7 +782,10 @@ function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",
     const title=document.createElement("div");title.className="result-title";
     const phase=view.mode==="search"?(view.isBest?"Новый лучший вариант":"Текущий кандидат"):"Итоговая раскладка";
     title.innerHTML=`<strong>Лист ${index+1} · ${phase}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
-    const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");decorateResultSvg(clone,meta,index);
+    const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
+    if(view.mode==="search")forceVisibleSheetBin(clone,true);
+    decorateResultSvg(clone,meta,index);
+    if(view.mode==="search")forceVisibleSheetBin(clone,true);
     card.appendChild(title);card.appendChild(clone);
     const summary=document.createElement("div");summary.className="sheet-summary";summary.innerHTML=`<span>Поле: <strong>${meta.margin} мм</strong> · зазор: <strong>${meta.gap} мм</strong></span><span>Деталей: <strong>${placed||0}/${total||0}</strong></span>`;card.appendChild(summary);wrap.appendChild(card);
   });
