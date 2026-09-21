@@ -1,4 +1,4 @@
-const SHEETNEST_ENGINE_BUILD="20260921-stable-large-order-hotfix-v1";
+const SHEETNEST_ENGINE_BUILD="20260921-diagnostics-dxf-fill-patch-v1";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
@@ -632,11 +632,14 @@ function dxfTextToSvg(text){
   for(const p of points){bounds.minX=Math.min(bounds.minX,p.x);bounds.maxX=Math.max(bounds.maxX,p.x);bounds.minY=Math.min(bounds.minY,p.y);bounds.maxY=Math.max(bounds.maxY,p.y)}
   const padding=1,minX=bounds.minX-padding,maxY=bounds.maxY+padding;
   const width=Math.max(1,bounds.maxX-bounds.minX+2*padding),height=Math.max(1,bounds.maxY-bounds.minY+2*padding);
-  const paths=closed.map(c=>{
+  // Все замкнутые DXF-контуры сохраняем как subpath одного <path>.
+  // Это важно для корректной визуальной заливки: fill-rule="evenodd"
+  // делает вложенные контуры отверстиями независимо от направления обхода.
+  const compoundPath=closed.map(c=>{
     const shifted=c.map(p=>({x:p.x-minX,y:p.y-maxY}));
-    return "<path d=\"" + dxfPathFromPoints(shifted).replace(/"/g,"&quot;") + "\" />";
-  }).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-contours="${closed.length}" data-open="${open.length}"><g fill="none" stroke="black" stroke-width="0.2">${paths}</g></svg>`;
+    return dxfPathFromPoints(shifted);
+  }).join(" ");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" data-contours="${closed.length}" data-open="${open.length}"><path d="${compoundPath.replace(/"/g,"&quot;")}" fill="#111820" fill-opacity="1" fill-rule="evenodd" stroke="#05070a" stroke-width="0.2" stroke-linejoin="round" stroke-linecap="round" /></svg>`;
 }
 
 function sourceElements(svgText){
@@ -1104,8 +1107,14 @@ function updateDiagnosticsFromCandidate(svgList,isBest,frame,validation,renderNo
   });
   if(renderNow)renderDiagnosticsPanel();
 }
-function finalizeDiagnostics(svgList,reason="complete"){
-  const finalSet=new Set(collectPlacedUnitIds(svgList).unitIds);
+function finalizeDiagnostics(svgList,reason="complete",usedUnitIds=null){
+  // Финальная диагностика должна использовать тот же набор units, который
+  // реально был принят коммитом раскладки. SVG здесь является только
+  // визуальным представлением результата и не должен повторно определять
+  // источник истины для финального состояния.
+  const finalSet=usedUnitIds instanceof Set
+    ? new Set(usedUnitIds)
+    : new Set(usedUnitIds||[]);
   diagnosticEntries().forEach(entry=>{
     entry.finalUnitIds=entry.unitIds.filter(unitId=>finalSet.has(unitId));
     const finalCount=entry.finalUnitIds.length;
@@ -2021,7 +2030,7 @@ async function runSearch(options={}){
     if(!benchmark){
       if(committedSheets.length){
         renderResults(committedSheets,meta.efficiency,finalPlacedUnits,totalUnits,sheet,{mode:"final",frame:state.searchFrames,isBest:meta.complete});
-        finalizeDiagnostics(committedSheets,meta.complete?"complete":"partial-result");
+        finalizeDiagnostics(committedSheets,meta.complete?"complete":"partial-result",usedUnitIds);
       }else{
         finalizeDiagnostics([],"no-valid-result");
       }
