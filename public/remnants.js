@@ -112,6 +112,72 @@
     return{business:false,orientation:null,fit:null};
   }
 
+  // Жёсткая проверка сохранённого делового остатка перед передачей в SvgNest.
+  // Невалидная геометрия автоматически исключается из текущего расчёта.
+  function validateRemnantForNesting(rem,minL,minW,gap,sheet){
+    try{
+      if(!rem||!Array.isArray(rem.polygon))return{valid:false,reason:"polygon отсутствует"};
+      const poly=rem.polygon.map(p=>({x:Number(p?.x??p?.X),y:Number(p?.y??p?.Y)}));
+      if(poly.length<3)return{valid:false,reason:"меньше 3 точек"};
+      if(poly.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y)))return{valid:false,reason:"нечисловые координаты"};
+
+      const eps=1e-6;
+      for(let i=0;i<poly.length;i++){
+        const a=poly[i],b=poly[(i+1)%poly.length];
+        if(Math.hypot(a.x-b.x,a.y-b.y)<=eps)return{valid:false,reason:"нулевой сегмент"};
+      }
+
+      const polyArea=area(poly);
+      if(!Number.isFinite(polyArea)||polyArea<=EPS)return{valid:false,reason:"нулевая/повреждённая площадь"};
+
+      const b=bounds(poly);
+      if(!Number.isFinite(b.width)||!Number.isFinite(b.height)||b.width<=EPS||b.height<=EPS){
+        return{valid:false,reason:"повреждённые габариты"};
+      }
+
+      // Самопересечение обычно приводит к некорректному bin/path при построении SVG.
+      for(let i=0;i<poly.length;i++){
+        const a1=poly[i],a2=poly[(i+1)%poly.length];
+        for(let j=i+1;j<poly.length;j++){
+          const adjacent=j===i+1 || (i===0 && j===poly.length-1);
+          if(adjacent)continue;
+          const b1=poly[j],b2=poly[(j+1)%poly.length];
+          if(segIntersect(a1,a2,b1,b2))return{valid:false,reason:"самопересекающийся контур"};
+        }
+      }
+
+      const fit=classify(poly,minL,minW,gap);
+      if(!fit.business)return{valid:false,reason:"не проходит критерий делового остатка"};
+
+      // Если доступен текущий лист, остаток не должен быть физически больше него.
+      if(sheet){
+        const sw=Number(sheet.w),sh=Number(sheet.h);
+        if(Number.isFinite(sw)&&Number.isFinite(sh) &&
+          ((b.width>sw+EPS&&b.height>sh+EPS)&&(b.width>sh+EPS||b.height>sw+EPS))){
+          return{valid:false,reason:"остаток больше текущего листа"};
+        }
+      }
+
+      // Финальная проверка через тот же SVG-путь, который пойдёт в SvgNest.
+      const probeSvg=buildBinSvg(poly,[]);
+      const parsed=SvgNest.parsesvg(probeSvg);
+      const bin=parsed?.querySelector?.("#sheet-bin,.bin");
+      if(!bin)return{valid:false,reason:"SvgNest не создал bin"};
+      const parsedPoly=polygonifyElement(bin);
+      const parsedArea=parsedPoly?area(parsedPoly):0;
+      if(!parsedPoly||parsedPoly.length<3||!Number.isFinite(parsedArea)||parsedArea<=EPS){
+        return{valid:false,reason:"SvgNest получил повреждённый bin"};
+      }
+      const areaDiff=Math.abs(parsedArea-polyArea)/Math.max(polyArea,1);
+      if(areaDiff>0.01)return{valid:false,reason:"площадь bin изменилась более чем на 1%"};
+
+      return{valid:true,reason:"ok",polygon:poly,bounds:b,area:polyArea,fit};
+    }catch(err){
+      console.warn("SheetNest: remnant validation failed",err);
+      return{valid:false,reason:"исключение при проверке"};
+    }
+  }
+
   function polygonifyElement(el){
     try{
       const p=SvgParser.polygonify(el);
@@ -767,20 +833,51 @@
     const currentSheet=getSheet();
     const currentSheetArea=Math.max(1,Number(currentSheet.w||0)*Number(currentSheet.h||0));
     let remnants=load().filter(compatible);
+    const invalidRemnants=[];
     remnants=remnants.filter(r=>{
       try{
-        if(!Array.isArray(r?.polygon)||r.polygon.length<3)return false;
+        if(!Array.isArray(r?.polygon)||r.polygon.length<3){
+          invalidRemnants.push({rem:r,reason:"polygon отсутствует или слишком короткий"});
+          return false;
+        }
         const ra=area(r.polygon),rb=bounds(r.polygon);
         // Старые ошибочные записи, представляющие практически весь лист,
         // не должны снова попадать в расчёт.
-        if(ra/currentSheetArea>=0.995)return false;
-        if(rb.width>=Number(currentSheet.w||0)*0.995 && rb.height>=Number(currentSheet.h||0)*0.995 && ra/currentSheetArea>=0.90)return false;
-        return classify(r.polygon,minL,minW,gap).business;
+        if(ra/currentSheetArea>=0.995){
+          invalidRemnants.push({rem:r,reason:"почти весь текущий лист"});
+          return false;
+        }
+        if(rb.width>=Number(currentSheet.w||0)*0.995 && rb.height>=Number(currentSheet.h||0)*0.995 && ra/currentSheetArea>=0.90){
+          invalidRemnants.push({rem:r,reason:"габариты совпадают с листом"});
+          return false;
+        }
+        const check=validateRemnantForNesting(r,minL,minW,gap,currentSheet);
+        if(!check.valid){
+          invalidRemnants.push({rem:r,reason:check.reason});
+          return false;
+        }
+        // Нормализуем проверенную геометрию, чтобы ниже по коду использовались
+        // ровно те координаты, которые прошли SVG/SvgNest probe.
+        r.polygon=check.polygon;
+        r.area=check.area;
+        r.bbox={width:check.bounds.width,height:check.bounds.height};
+        return true;
       }catch(err){
+        invalidRemnants.push({rem:r,reason:"ошибка фильтра"});
         console.warn("SheetNest: invalid saved remnant skipped",err);
         return false;
       }
     });
+    if(invalidRemnants.length){
+      try{
+        const invalidIds=new Set(invalidRemnants.map(x=>x.rem?.id).filter(Boolean));
+        if(invalidIds.size){
+          const stored=load().filter(x=>!invalidIds.has(x.id));
+          save(stored);
+        }
+        invalidRemnants.forEach(x=>console.warn("SheetNest: damaged business remnant excluded:",x.rem?.id,x.reason));
+      }catch(err){console.warn("SheetNest: invalid remnant cleanup skipped",err)}
+    }
     remnants.sort((a,b)=>b.area-a.area);
     const q=qualityConfig();
     const maxRemnants=q.seconds<=10?6:q.seconds<=30?10:18;
@@ -814,6 +911,21 @@
       for(const rem of remnants){
         if(!remaining.size||!state.running)break;
         const instances=[...remaining.values()];
+        // Повторная проверка непосредственно перед запуском SvgNest:
+        // остаток мог быть изменён/повреждён после первичного фильтра.
+        const preRunCheck=validateRemnantForNesting(rem,minL,minW,gap,currentSheet);
+        if(!preRunCheck.valid){
+          console.warn("SheetNest: damaged business remnant excluded before runBin:",rem.id,preRunCheck.reason);
+          testedRemnantIds.add(rem.id);
+          try{
+            const stored=load().filter(x=>x.id!==rem.id);
+            save(stored);
+          }catch(err){console.warn("SheetNest: failed to remove damaged remnant",err)}
+          continue;
+        }
+        rem.polygon=preRunCheck.polygon;
+        rem.area=preRunCheck.area;
+        rem.bbox={width:preRunCheck.bounds.width,height:preRunCheck.bounds.height};
         const run=await runBin(rem.polygon,instances,"remnant",updateMixed);
         testedRemnantIds.add(rem.id);
         phaseIndex++;
