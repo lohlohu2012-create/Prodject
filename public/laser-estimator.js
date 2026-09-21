@@ -15,8 +15,9 @@ const num=(id,fallback)=>{const n=Number($(id)?.value);return Number.isFinite(n)
 
 function interpolate(rows,thickness){
   if(!rows?.length)return null;
-  if(thickness<=rows[0][0])return{min:rows[0][1],max:rows[0][2],interpolated:thickness!==rows[0][0]};
-  if(thickness>=rows[rows.length-1][0])return{min:rows[rows.length-1][1],max:rows[rows.length-1][2],interpolated:thickness!==rows[rows.length-1][0]};
+  if(thickness<rows[0][0])return{min:rows[0][1],max:rows[0][2],interpolated:true};
+  if(thickness===rows[rows.length-1][0])return{min:rows[rows.length-1][1],max:rows[rows.length-1][2],interpolated:false};
+  if(thickness>rows[rows.length-1][0])return null;
   for(let i=1;i<rows.length;i++){
     const a=rows[i-1],b=rows[i];
     if(thickness<=b[0]){
