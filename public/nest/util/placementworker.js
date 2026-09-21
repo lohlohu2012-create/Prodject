@@ -218,67 +218,74 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 				var minx = null;
 				var nf, area, shiftvector;
 
-				// Cache the bounding box of already placed geometry once.
-				var placedMinX = Infinity;
-				var placedMinY = Infinity;
-				var placedMaxX = -Infinity;
-				var placedMaxY = -Infinity;
-				for(m=0; m<placed.length; m++){
-					var placedPath = placed[m];
-					var placedOffset = placements[m];
-					for(n=0; n<placedPath.length; n++){
-						var px = placedPath[n].x + placedOffset.x;
-						var py = placedPath[n].y + placedOffset.y;
-						if(px < placedMinX) placedMinX = px;
-						if(py < placedMinY) placedMinY = py;
-						if(px > placedMaxX) placedMaxX = px;
-						if(py > placedMaxY) placedMaxY = py;
+				if(self.config.fastPlacementScoring===false){
+					// Baseline: original scoring path before the optimization.
+					for(j=0; j<finalNfp.length; j++){
+						nf = finalNfp[j];
+						if(Math.abs(GeometryUtil.polygonArea(nf)) < 2)continue;
+						for(k=0; k<nf.length; k++){
+							var allpoints = [];
+							for(m=0; m<placed.length; m++){
+								for(n=0; n<placed[m].length; n++){
+									allpoints.push({x:placed[m][n].x+placements[m].x,y:placed[m][n].y+placements[m].y});
+								}
+							}
+							shiftvector = {
+								x:nf[k].x-path[0].x,
+								y:nf[k].y-path[0].y,
+								id:path.id,
+								rotation:path.rotation,
+								nfp:combinedNfp
+							};
+							for(m=0; m<path.length; m++){
+								allpoints.push({x:path[m].x+shiftvector.x,y:path[m].y+shiftvector.y});
+							}
+							var rectbounds=GeometryUtil.getPolygonBounds(allpoints);
+							area=rectbounds.width*2+rectbounds.height;
+							if(minarea===null||area<minarea||(GeometryUtil.almostEqual(minarea,area)&&(minx===null||shiftvector.x<minx))){
+								minarea=area;minwidth=rectbounds.width;position=shiftvector;minx=shiftvector.x;
+							}
+						}
 					}
-				}
-
-				var pathBounds = GeometryUtil.getPolygonBounds(path);
-				var pathMinX = pathBounds.x;
-				var pathMinY = pathBounds.y;
-				var pathMaxX = pathBounds.x + pathBounds.width;
-				var pathMaxY = pathBounds.y + pathBounds.height;
-
-				for(j=0; j<finalNfp.length; j++){
-					nf = finalNfp[j];
-					if(Math.abs(GeometryUtil.polygonArea(nf)) < 2){
-						continue;
+				}else{
+					// Optimized: bounding box of placed geometry is calculated once.
+					var placedMinX=Infinity,placedMinY=Infinity,placedMaxX=-Infinity,placedMaxY=-Infinity;
+					for(m=0; m<placed.length; m++){
+						var placedPath=placed[m],placedOffset=placements[m];
+						for(n=0; n<placedPath.length; n++){
+							var px=placedPath[n].x+placedOffset.x,py=placedPath[n].y+placedOffset.y;
+							if(px<placedMinX)placedMinX=px;
+							if(py<placedMinY)placedMinY=py;
+							if(px>placedMaxX)placedMaxX=px;
+							if(py>placedMaxY)placedMaxY=py;
+						}
 					}
-
-					for(k=0; k<nf.length; k++){
-						shiftvector = {
-							x: nf[k].x-path[0].x,
-							y: nf[k].y-path[0].y,
-							id: path.id,
-							rotation: path.rotation,
-							nfp: combinedNfp
-						};
-
-						var shiftedMinX = pathMinX + shiftvector.x;
-						var shiftedMinY = pathMinY + shiftvector.y;
-						var shiftedMaxX = pathMaxX + shiftvector.x;
-						var shiftedMaxY = pathMaxY + shiftvector.y;
-						var rectMinX = Math.min(placedMinX, shiftedMinX);
-						var rectMinY = Math.min(placedMinY, shiftedMinY);
-						var rectMaxX = Math.max(placedMaxX, shiftedMaxX);
-						var rectMaxY = Math.max(placedMaxY, shiftedMaxY);
-						var rectbounds = {
-							x:rectMinX,
-							y:rectMinY,
-							width:rectMaxX-rectMinX,
-							height:rectMaxY-rectMinY
-						};
-
-						area = rectbounds.width*2 + rectbounds.height;
-
-						if(minarea === null || area < minarea || (GeometryUtil.almostEqual(minarea, area) && (minx === null || shiftvector.x < minx))){
-							minarea = area;
-							minwidth = rectbounds.width;
-							position = shiftvector;
-							minx = shiftvector.x;
+					var pathBounds=GeometryUtil.getPolygonBounds(path);
+					var pathMinX=pathBounds.x,pathMinY=pathBounds.y;
+					var pathMaxX=pathBounds.x+pathBounds.width,pathMaxY=pathBounds.y+pathBounds.height;
+					for(j=0; j<finalNfp.length; j++){
+						nf=finalNfp[j];
+						if(Math.abs(GeometryUtil.polygonArea(nf))<2)continue;
+						for(k=0; k<nf.length; k++){
+							shiftvector={
+								x:nf[k].x-path[0].x,
+								y:nf[k].y-path[0].y,
+								id:path.id,
+								rotation:path.rotation,
+								nfp:combinedNfp
+							};
+							var shiftedMinX=pathMinX+shiftvector.x,shiftedMinY=pathMinY+shiftvector.y;
+							var shiftedMaxX=pathMaxX+shiftvector.x,shiftedMaxY=pathMaxY+shiftvector.y;
+							var rectbounds={
+								x:Math.min(placedMinX,shiftedMinX),
+								y:Math.min(placedMinY,shiftedMinY),
+								width:Math.max(placedMaxX,shiftedMaxX)-Math.min(placedMinX,shiftedMinX),
+								height:Math.max(placedMaxY,shiftedMaxY)-Math.min(placedMinY,shiftedMinY)
+							};
+							area=rectbounds.width*2+rectbounds.height;
+							if(minarea===null||area<minarea||(GeometryUtil.almostEqual(minarea,area)&&(minx===null||shiftvector.x<minx))){
+								minarea=area;minwidth=rectbounds.width;position=shiftvector;minx=shiftvector.x;
+							}
 						}
 					}
 				}
