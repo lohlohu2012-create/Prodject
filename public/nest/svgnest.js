@@ -332,7 +332,6 @@
 			
 			var nfpPairs = [];
 			var key;
-			var newCache = {};
 			
 			for(i=0; i<placelist.length; i++){
 				var part = placelist[i];
@@ -340,23 +339,15 @@
 				if(!nfpCache[JSON.stringify(key)]){
 					nfpPairs.push({A: binPolygon, B: part, key: key});
 				}
-				else{
-					newCache[JSON.stringify(key)] = nfpCache[JSON.stringify(key)]
-				}
 				for(j=0; j<i; j++){
 					var placed = placelist[j];
 					key = {A: placed.id, B: part.id, inside: false, Arotation: rotations[j], Brotation: rotations[i]};
 					if(!nfpCache[JSON.stringify(key)]){
 						nfpPairs.push({A: placed, B: part, key: key});
 					}
-					else{
-						newCache[JSON.stringify(key)] = nfpCache[JSON.stringify(key)]
-					}
 				}
 			}
-			
-			// only keep cache for one cycle
-			nfpCache = newCache;
+			// Keep NFPs across GA generations for this run.
 			
 			var worker = new PlacementWorker(binPolygon, placelist.slice(0), ids, rotations, config, nfpCache);
 			
