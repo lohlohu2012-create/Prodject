@@ -1813,7 +1813,9 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
     .filter((n,i,a)=>n>0&&a.indexOf(n)===i);
   let best=null;
   let attempted=0;
-  const maxAttempts=fastLocal?(remaining.length>140?8:10):12;
+  // На локальном запуске не тратим весь бюджет на большие NFP-пакеты:
+  // оставляем время для гарантированного single-part fallback.
+  const maxAttempts=fastLocal?(remaining.length>140?6:7):12;
 
   for(const size of sizes){
     const remainingAttempts=maxAttempts-attempted;
@@ -1824,7 +1826,9 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
       for(const orientation of orientations){
         if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
         attempted++;
-        const budget=Math.max(2200,Number(perf.sheetCandidateMs)||4000);
+        const budget=fastLocal
+          ?Math.max(2200,Math.min(Number(perf.sheetCandidateMs)||3200,3200))
+          :Math.max(2200,Number(perf.sheetCandidateMs)||4000);
         const runBest=await startOneRun(orientation,budget,runId,pool,perf);
         if(!runBest?.results?.length)continue;
         const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
