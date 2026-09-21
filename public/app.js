@@ -533,7 +533,7 @@ function setupSheetDragging(wrap){
   wrap.addEventListener("pointerdown",event=>{
     if(event.button!==0)return;
     const card=event.target.closest(".result-card");
-    if(!card||!wrap.contains(card))return;
+    if(!card||!wrap.contains(card)||!card.classList.contains("sheet-card-draggable"))return;
     if(event.target.closest("button,input,select,textarea,a"))return;
 
     const startX=Number(card.dataset.dragX||0);
@@ -569,7 +569,7 @@ function setupSheetDragging(wrap){
 
   wrap.addEventListener("dblclick",event=>{
     const card=event.target.closest(".result-card");
-    if(!card||!wrap.contains(card))return;
+    if(!card||!wrap.contains(card)||!card.classList.contains("sheet-card-draggable"))return;
     applyPosition(card,0,0);
   });
 }
@@ -846,7 +846,7 @@ function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",
   wrap.classList.toggle("searching",view.mode==="search");
   svgList.forEach((svg,index)=>{
     const card=document.createElement("div");
-    card.className="result-card sheet-card-draggable"+(view.mode==="search"?" search-frame":"");
+    card.className="result-card"+(view.mode==="search"?" search-frame":" sheet-card-draggable");
     const title=document.createElement("div");title.className="result-title";
     const phase=view.mode==="search"?(view.isBest?"Новый лучший вариант":"Текущий кандидат"):"Итоговая раскладка";
     title.innerHTML=`<strong>Лист ${index+1} · ${phase}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
