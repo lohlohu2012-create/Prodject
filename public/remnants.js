@@ -700,14 +700,24 @@
 
   function styleLiveCandidateSvg(svg,label,index){
     try{
-      const bin=svg?.querySelector("#sheet-bin,.bin");
-      if(!bin)return;
-      bin.setAttribute("fill","#b8c1ca");
-      bin.setAttribute("fill-opacity","0.92");
-      bin.setAttribute("stroke","#687481");
-      bin.setAttribute("stroke-width","0.9");
-      bin.setAttribute("vector-effect","non-scaling-stroke");
-      if(label==="remnant")bin.setAttribute("fill-opacity","0.72");
+      if(typeof forceVisibleSheetBin==="function"){
+        forceVisibleSheetBin(svg,true);
+      }else{
+        const bins=svg?.querySelectorAll("#sheet-bin,.bin")||[];
+        bins.forEach(bin=>{
+          bin.setAttribute("fill","#b8c1ca");
+          bin.setAttribute("fill-opacity",label==="remnant"?"0.72":"0.92");
+          bin.setAttribute("stroke","#687481");
+          bin.setAttribute("stroke-width","0.9");
+          if(bin.style){
+            bin.style.setProperty("fill","#b8c1ca","important");
+            bin.style.setProperty("fill-opacity",label==="remnant"?"0.72":"0.92","important");
+            bin.style.setProperty("stroke","#687481","important");
+            bin.style.setProperty("stroke-width","0.9","important");
+          }
+        });
+        svg?.setAttribute("preserveAspectRatio","xMidYMid meet");
+      }
     }catch(err){
       console.warn("SheetNest: live candidate sheet styling skipped",err);
     }
