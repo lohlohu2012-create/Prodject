@@ -1045,11 +1045,16 @@ function resetDiagnosticsForAttempt(scopeIds){
   const scope=scopeIds?new Set(scopeIds):null;
   diagnosticEntries().forEach(entry=>{
     if(scope&&!scope.has(entry.instanceId))return;
-    (entry.unitIds||[]).forEach(unitId=>{
-      if(state.unitToInstance[unitId]===entry.instanceId)delete state.unitToInstance[unitId];
-    });
-    entry.unitIds=[];
-    entry.parsed=false;
+    // Не удаляем уже известные unitId: один и тот же instance может
+    // проходить несколько NFP-попыток. История units должна сохраняться
+    // до финального коммита, иначе уже найденная деталь снова становится
+    // «неизвестной» для финальной диагностики и fallback.
+    entry.parsed=entry.unitIds.length>=entry.expectedUnits;
+    if(entry.parsed){
+      entry.status="parsed";
+      entry.stage="SvgNest.parse/getParts";
+      entry.issue="Все ожидаемые nesting units распознаны.";
+    }
   });
 }
 
@@ -1060,9 +1065,10 @@ function registerParsedUnits(parsed,scopeIds=null){
 
   diagnosticEntries().forEach(entry=>{
     if(scope&&!scope.has(entry.instanceId))return;
-    (entry.unitIds||[]).forEach(unitId=>delete state.unitToInstance[unitId]);
-    entry.unitIds=[];
-    entry.parsed=false;
+    // Сохраняем ранее распознанные units между повторными попытками.
+    // Иначе retry очищает связь unitId -> instanceId и ломает финальный
+    // учёт уже размещённых деталей.
+    entry.parsed=entry.unitIds.length>=entry.expectedUnits;
   });
 
   elements.forEach(node=>{
@@ -1079,8 +1085,9 @@ function registerParsedUnits(parsed,scopeIds=null){
 
   diagnosticEntries().forEach(entry=>{
     if(scope&&!scope.has(entry.instanceId))return;
-    const parsedCount=parsedByInstance[entry.instanceId]?.size||0;
-    entry.parsed=parsedCount>0;
+    const currentParsedCount=parsedByInstance[entry.instanceId]?.size||0;
+    const parsedCount=Math.max(currentParsedCount,entry.unitIds.length);
+    entry.parsed=parsedCount>=entry.expectedUnits;
     if(parsedCount===entry.expectedUnits){
       entry.status="parsed";entry.stage="SvgNest.parse/getParts";entry.issue="Все ожидаемые nesting units распознаны.";
     }else if(parsedCount>0){
@@ -1770,7 +1777,8 @@ function buildDirectSingleSheetCandidate(instance,sheet,runId){
     const entry=state.instanceDiagnostics?.[instance.instanceId];
     if(entry){
       (entry.unitIds||[]).forEach(id=>{if(state.unitToInstance[id]===instance.instanceId)delete state.unitToInstance[id]});
-      entry.unitIds=[unitId];entry.parsed=true;entry.staged=true;entry.status="parsed";entry.stage="Прямое размещение";entry.issue="Размещено аварийным геометрическим fallback без NFP.";
+      diagnosticAddUnique(entry.unitIds,unitId);
+      entry.parsed=true;entry.staged=true;entry.status="parsed";entry.stage="Прямое размещение";entry.issue="Размещено аварийным геометрическим fallback без NFP.";
       state.unitToInstance[unitId]=instance.instanceId;
     }
     const validation=validateNestingResult([svg],1,1);
@@ -1843,8 +1851,9 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
 
   return {best,attempted,initialPoolSize:initialSize};
 }
-async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf){
+async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf,options=null){
   if(!candidate)return {remaining,committed:false};
+  const skipRefill=Boolean(options?.skipRefill);
   const sheetIndex=committedSheets.length;
   const accepted=appendFreshResultSheets(committedSheets,[candidate.svg],usedUnitIds,candidate.orientation);
   if(!accepted.length)return {remaining,committed:false};
@@ -1852,12 +1861,14 @@ async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,re
 
   // После фиксации листа повторно оптимизируем только его, сохраняя все уже
   // размещённые на нём детали. Это даёт шанс заполнять карманы мелкими деталями.
-  const refill=await refillCommittedSheets(
-    committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,
-    Math.max(1600,Number(perf.sheetCandidateMs)||3000),perf,
-    {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(6,Number(perf.refillCandidates||8)),16),maxPasses:Math.max(2,Number(perf.refillPasses)||2),maxSheets:1}
-  );
-  remaining=refill.remaining;
+  if(!skipRefill){
+    const refill=await refillCommittedSheets(
+      committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,
+      Math.max(1600,Number(perf.sheetCandidateMs)||3000),perf,
+      {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(6,Number(perf.refillCandidates||8)),16),maxPasses:Math.max(2,Number(perf.refillPasses)||2),maxSheets:1}
+    );
+    remaining=refill.remaining;
+  }
   return {remaining,committed:true,sheetIndex};
 }
 
@@ -1961,7 +1972,7 @@ async function runSearch(options={}){
           const candidate=chooseBestNestingSheet(direct.results,usedUnitIds,allInstances,orientation);
           if(!candidate)continue;
           candidate.orientation=orientation;candidate.poolSize=1;
-          const committed=await commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf);
+          const committed=await commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf,{skipRefill:true});
           remaining=committed.remaining;
           if(committed.committed){sheetNo++;directRescued=true;break;}
         }
