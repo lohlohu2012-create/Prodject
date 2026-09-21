@@ -717,7 +717,13 @@
       const card=document.createElement("div");card.className="result-card search-frame";
       const head=document.createElement("div");head.className="result-title";
       head.innerHTML="<strong>"+(label==="remnant"?"Поиск в деловом остатке":"Поиск на новом листом")+" · лист "+(index+1)+"</strong><span>"+(isBest?"Новый лучший вариант":"Текущий кандидат")+"</span>";
-      const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
+      const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");
+      // SvgNest сохраняет реальный viewBox; явно фиксируем режим масштабирования,
+      // чтобы CSS-растягивание рабочей карточки никогда не меняло пропорции CAD-геометрии.
+      if(!clone.getAttribute("preserveAspectRatio")){
+        clone.setAttribute("preserveAspectRatio","xMidYMid meet");
+      }
+      clone.removeAttribute("width");clone.removeAttribute("height");
       styleLiveCandidateSvg(clone,label,index);
       card.appendChild(head);card.appendChild(clone);
       const summary=document.createElement("div");summary.className="sheet-summary";
