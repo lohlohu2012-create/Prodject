@@ -201,7 +201,7 @@ function appendLibraryParts(root,stage){
       group.setAttribute("data-sheetnest-shape",shape.id);
       group.setAttribute("transform","translate("+stage.nextX+" "+stage.nextY+")");
       const path=document.createElementNS(ns,"path");
-      path.setAttribute("d",d);path.setAttribute("fill","none");path.setAttribute("stroke","black");path.setAttribute("stroke-width",".2");
+      path.setAttribute("d",d);path.setAttribute("fill","#aeb8c2");path.setAttribute("fill-opacity","0.72");path.setAttribute("stroke","#313a44");path.setAttribute("stroke-width",".9");
       stampNestingSource(path,instanceId,shape.id);
       group.appendChild(path);root.appendChild(group);
       stage.nextX+=bounds.width+stage.gap;
