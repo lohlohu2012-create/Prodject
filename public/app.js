@@ -508,9 +508,76 @@ function setCanvasZoom(nextZoom,clientX=null,clientY=null){
 }
 function resetCanvasZoom(){setCanvasZoom(1)}
 function fitCanvasZoom(){setCanvasZoom(1)}
+function setupSheetDragging(wrap){
+  if(!wrap||wrap.dataset.sheetDragReady==="1")return;
+  wrap.dataset.sheetDragReady="1";
+
+  let drag=null;
+
+  const applyPosition=(card,x,y)=>{
+    const safeX=Number.isFinite(x)?x:0;
+    const safeY=Number.isFinite(y)?y:0;
+    card.dataset.dragX=String(safeX);
+    card.dataset.dragY=String(safeY);
+    card.style.transform="translate3d("+safeX+"px,"+safeY+"px,0)";
+  };
+
+  const finish=()=>{
+    if(!drag)return;
+    drag.card.classList.remove("sheet-dragging");
+    drag.card.style.zIndex="";
+    try{drag.card.releasePointerCapture?.(drag.pointerId)}catch(_){}
+    drag=null;
+  };
+
+  wrap.addEventListener("pointerdown",event=>{
+    if(event.button!==0)return;
+    const card=event.target.closest(".result-card");
+    if(!card||!wrap.contains(card))return;
+    if(event.target.closest("button,input,select,textarea,a"))return;
+
+    const startX=Number(card.dataset.dragX||0);
+    const startY=Number(card.dataset.dragY||0);
+    drag={
+      card,
+      pointerId:event.pointerId,
+      startPointerX:event.clientX,
+      startPointerY:event.clientY,
+      startX:Number.isFinite(startX)?startX:0,
+      startY:Number.isFinite(startY)?startY:0
+    };
+    card.classList.add("sheet-dragging");
+    card.style.zIndex="20";
+    try{card.setPointerCapture?.(event.pointerId)}catch(_){}
+    event.preventDefault();
+  });
+
+  wrap.addEventListener("pointermove",event=>{
+    if(!drag||event.pointerId!==drag.pointerId)return;
+    const dx=event.clientX-drag.startPointerX;
+    const dy=event.clientY-drag.startPointerY;
+    applyPosition(drag.card,drag.startX+dx,drag.startY+dy);
+    event.preventDefault();
+  });
+
+  wrap.addEventListener("pointerup",event=>{
+    if(drag&&event.pointerId===drag.pointerId)finish();
+  });
+  wrap.addEventListener("pointercancel",event=>{
+    if(drag&&event.pointerId===drag.pointerId)finish();
+  });
+
+  wrap.addEventListener("dblclick",event=>{
+    const card=event.target.closest(".result-card");
+    if(!card||!wrap.contains(card))return;
+    applyPosition(card,0,0);
+  });
+}
+
 function setupCanvasZoom(){
   const wrap=$( "canvasWrap" );
   if(!wrap)return;
+  setupSheetDragging(wrap);
   $( "zoomOut" )?.addEventListener("click",()=>setCanvasZoom(state.canvasZoom-CANVAS_ZOOM_STEP));
   $( "zoomIn" )?.addEventListener("click",()=>setCanvasZoom(state.canvasZoom+CANVAS_ZOOM_STEP));
   $( "zoomFit" )?.addEventListener("click",fitCanvasZoom);
@@ -778,7 +845,8 @@ function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",
   state.resultMeta=meta;
   wrap.classList.toggle("searching",view.mode==="search");
   svgList.forEach((svg,index)=>{
-    const card=document.createElement("div");card.className="result-card"+(view.mode==="search"?" search-frame":"");
+    const card=document.createElement("div");
+    card.className="result-card sheet-card-draggable"+(view.mode==="search"?" search-frame":"");
     const title=document.createElement("div");title.className="result-title";
     const phase=view.mode==="search"?(view.isBest?"Новый лучший вариант":"Текущий кандидат"):"Итоговая раскладка";
     title.innerHTML=`<strong>Лист ${index+1} · ${phase}</strong><span>${sheet.w} × ${sheet.h} мм · ${escapeHtml(meta.material)} · ${meta.thickness} мм</span>`;
