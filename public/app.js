@@ -969,7 +969,7 @@ $("fileInput").addEventListener("change",async event=>{
   }else{status("Ошибка");alert(failed.length?failed.join("\n"):"Не удалось загрузить файлы.");}
   event.target.value="";
 });
-$("nestButton").addEventListener("click",()=>{const runner=window.SheetNestRemnants?.run||runSearch;Promise.resolve().then(()=>runner()).catch(err=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;status("Ошибка");alert(err.message)})});
+$("nestButton").addEventListener("click",()=>{Promise.resolve().then(()=>runSearch()).catch(err=>{state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;status("Ошибка");alert(err.message)})});
 $("stopButton").addEventListener("click",()=>{state.runId+=1;state.running=false;try{SvgNest.stop()}catch(_){}$("nestButton").disabled=false;$("stopButton").disabled=true;$("runInfo").textContent="Поиск остановлен. Показан лучший найденный вариант.";status("Остановлено");$("progressBar").style.width="100%"});
 $("downloadButton").addEventListener("click",()=>{if(!state.resultSvgs.length||!state.resultMeta)return;const prepared=state.resultSvgs.map((item,index)=>{const clone=item.cloneNode(true);decorateResultSvg(clone,state.resultMeta,index);return new XMLSerializer().serializeToString(clone)}).join("\n");const out=`<svg xmlns="http://www.w3.org/2000/svg">${prepared}</svg>`;const blob=new Blob([out],{type:"image/svg+xml;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="sheetnest-metal-layout.svg";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 
