@@ -2,10 +2,11 @@
   "name": "sheetnest",
   "version": "0.1.0",
   "private": true,
-  "description": "Browser-based sheet nesting with SVG/DXF and DWG import adapter",
+  "description": "Browser-based metal sheet nesting with DXF/SVG, NFP optimization and offline export",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/sheetnest-syntax-smoke.js"
   },
   "dependencies": {
     "dxf-parser": "^1.1.2",
