@@ -1,4 +1,4 @@
-const SHEETNEST_ENGINE_BUILD="20260921-stability-pass-v1";
+const SHEETNEST_ENGINE_BUILD="20260921-laser-watchdog-v1";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false,runStage:"Готово",runDeadline:0,runLastProgressAt:0,runWatchdogTimer:null,runWatchdogReason:"",runWatchdogStallMs:15000};
 
 const $=id=>document.getElementById(id);
