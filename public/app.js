@@ -1982,8 +1982,9 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
           ?Math.max(2200,Math.min(Number(perf.sheetCandidateMs)||3200,3200))
           :Math.max(2200,Number(perf.sheetCandidateMs)||4000);
         const runBest=await startOneRun(orientation,budget,runId,pool,perf);
-        if(!runBest?.results?.length)continue;
-        let candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
+        let candidate=runBest?.results?.length
+          ?chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation)
+          :null;
 
         // Если NFP смог разместить только одну деталь из многодетального
         // пула, не считаем это хорошим раскроем: пробуем безопасную
