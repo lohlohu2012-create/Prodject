@@ -1580,7 +1580,9 @@ function evaluateNestingSheet(svg,usedUnitIds,allInstances,sheet){
   const fill=Math.min(1,estimatedArea/sheetArea);
   const newCount=newUnitIds.length;
   const instanceBonus=Math.log1p(Math.max(0,touchedInstances.size))*0.5;
-  const score=fill*100+Math.log1p(newCount)*7+instanceBonus;
+  // Фактическое число новых units должно доминировать над оценкой площади.
+  // Иначе большой элемент мог «выиграть» у множества мелких деталей.
+  const score=newCount*10000+fill*100+instanceBonus;
   return {svg,newUnitIds,newCount,fill,estimatedArea,score};
 }
 function chooseBestNestingSheet(results,usedUnitIds,allInstances,sheet){
@@ -1681,7 +1683,7 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
       if(best&&best.newCount>=pool.length)break;
     }
     if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
-    if(best&&best.newCount>=Math.min(12,size))break;
+    if(best&&best.newCount>=Math.max(1,Math.ceil(size*0.9)))break;
   }
 
   return {best,attempted,initialPoolSize:initialSize};
