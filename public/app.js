@@ -1,4 +1,4 @@
-const SHEETNEST_ENGINE_BUILD="20260921-diagnostics-dxf-fill-patch-v1";
+const SHEETNEST_ENGINE_BUILD="20260921-compaction-fallback-v1";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
@@ -1792,6 +1792,158 @@ function buildDirectSingleSheetCandidate(instance,sheet,runId){
   }
 }
 
+
+function buildBoundingBoxFallbackCandidate(instances,sheet,runId){
+  if(!Array.isArray(instances)||instances.length<2||!state.running||runId!==state.runId)return null;
+  try{
+    const margin=Math.max(0,readNumber("margin",10));
+    const gap=Math.max(0,readNumber("gap",2));
+    const usableW=Math.max(1,sheet.w-2*margin);
+    const usableH=Math.max(1,sheet.h-2*margin);
+    const rotationCount=Math.max(1,Math.floor(readNumber("rotations",2)));
+    const angles=rotationCount>=4?[0,90,180,270]:rotationCount>=2?[0,180]:[0];
+
+    const items=uniqueInstances(instances).map(instance=>{
+      if(nestingUnitCount([instance])!==1)return null;
+      const source=instance.kind==="custom"?instance.part.svgText:null;
+      const bounds=instance.kind==="custom"
+        ?estimateSvgBounds(source)
+        :{minX:0,minY:0,width:Number(instance.shape?.w)||1,height:Number(instance.shape?.h)||1};
+      const fits=[];
+      for(const angle of angles){
+        const r=angle*Math.PI/180,c=Math.cos(r),s=Math.sin(r);
+        const pts=[
+          [bounds.minX,bounds.minY],
+          [bounds.minX+bounds.width,bounds.minY],
+          [bounds.minX,bounds.minY+bounds.height],
+          [bounds.minX+bounds.width,bounds.minY+bounds.height]
+        ].map(([x,y])=>({x:x*c-y*s,y:x*s+y*c}));
+        const minX=Math.min(...pts.map(p=>p.x)),maxX=Math.max(...pts.map(p=>p.x));
+        const minY=Math.min(...pts.map(p=>p.y)),maxY=Math.max(...pts.map(p=>p.y));
+        fits.push({angle,minX,minY,width:maxX-minX,height:maxY-minY});
+      }
+      const valid=fits.filter(f=>f.width+gap<=usableW+1e-6&&f.height+gap<=usableH+1e-6);
+      if(!valid.length)return null;
+      return {instance,bounds,source,variants:valid};
+    }).filter(Boolean);
+
+    if(items.length<2)return null;
+
+    // Безопасная fallback-компоновка: размещаем детали по полкам,
+    // используя габаритные прямоугольники. Она не заменяет NFP, а
+    // включается только как rescue, когда NFP фактически кладёт по одной детали.
+    items.sort((a,b)=>{
+      const aa=a.bounds.width*a.bounds.height,bb=b.bounds.width*b.bounds.height;
+      return (bb-aa)||String(a.instance.instanceId).localeCompare(String(b.instance.instanceId));
+    });
+
+    const placed=[];
+    let x=margin,y=margin,rowH=0;
+    for(const item of items){
+      const choices=item.variants
+        .filter(v=>x+v.width<=sheet.w-margin+1e-6&&y+v.height<=sheet.h-margin+1e-6)
+        .sort((a,b)=>(a.height-b.height)||(a.width-b.width));
+      let fit=choices[0]||null;
+
+      if(!fit){
+        const nextY=y+rowH+gap;
+        if(rowH<=0||nextY+item.variants[0].height>sheet.h-margin+1e-6)continue;
+        y=nextY;x=margin;rowH=0;
+        fit=item.variants
+          .filter(v=>x+v.width<=sheet.w-margin+1e-6&&y+v.height<=sheet.h-margin+1e-6)
+          .sort((a,b)=>(a.height-b.height)||(a.width-b.width))[0]||null;
+      }
+      if(!fit)continue;
+
+      placed.push({...item,x,y,fit});
+      x+=fit.width+gap;
+      rowH=Math.max(rowH,fit.height);
+    }
+
+    if(placed.length<2)return null;
+
+    const ns="http://www.w3.org/2000/svg";
+    const svg=document.createElementNS(ns,"svg");
+    svg.setAttribute("xmlns",ns);
+    svg.setAttribute("viewBox","0 0 "+sheet.w+" "+sheet.h);
+    svg.setAttribute("width",String(sheet.w));
+    svg.setAttribute("height",String(sheet.h));
+    svg.setAttribute("preserveAspectRatio","xMidYMid meet");
+
+    const bin=document.createElementNS(ns,"rect");
+    bin.setAttribute("id","sheet-bin");
+    bin.setAttribute("x","0");bin.setAttribute("y","0");
+    bin.setAttribute("width",String(sheet.w));bin.setAttribute("height",String(sheet.h));
+    bin.setAttribute("fill","#b8c1ca");bin.setAttribute("fill-opacity","0.92");
+    bin.setAttribute("stroke","#687481");bin.setAttribute("stroke-width","0.9");
+    svg.appendChild(bin);
+
+    for(const item of placed){
+      const group=document.createElementNS(ns,"g");
+      const unitId=item.instance.instanceId+":unit-1";
+      group.setAttribute("data-sheetnest-unit-id",unitId);
+      group.setAttribute("data-sheetnest-source-instance-id",item.instance.instanceId);
+      group.setAttribute(
+        "transform",
+        "translate("+(item.x-item.fit.minX)+" "+(item.y-item.fit.minY)+") rotate("+item.fit.angle+")"
+      );
+
+      if(item.instance.kind==="custom"){
+        const doc=new DOMParser().parseFromString(item.source,"image/svg+xml");
+        const root=doc.documentElement;
+        Array.from(root?.children||[])
+          .filter(node=>!["defs","style","title","desc","metadata","script"].includes(String(node.tagName||"").toLowerCase()))
+          .forEach(node=>{
+            const clone=node.cloneNode(true);
+            stampNestingSource(clone,item.instance.instanceId,item.instance.part.id);
+            group.appendChild(clone);
+          });
+      }else{
+        const path=document.createElementNS(ns,"path");
+        path.setAttribute("d",shapePath(item.instance.shape));
+        path.setAttribute("fill","#aeb8c2");
+        path.setAttribute("fill-opacity","0.72");
+        path.setAttribute("stroke","#313a44");
+        path.setAttribute("stroke-width",".9");
+        stampNestingSource(path,item.instance.instanceId,item.instance.shape.id);
+        group.appendChild(path);
+      }
+
+      svg.appendChild(group);
+
+      const entry=state.instanceDiagnostics?.[item.instance.instanceId];
+      if(entry){
+        diagnosticAddUnique(entry.unitIds,unitId);
+        entry.parsed=true;
+        entry.staged=true;
+        state.unitToInstance[unitId]=item.instance.instanceId;
+      }
+    }
+
+    svg.setAttribute("data-sheet-w",String(sheet.w));
+    svg.setAttribute("data-sheet-h",String(sheet.h));
+
+    const validation=validateNestingResult([svg],placed.length,placed.length);
+    if(!validation.valid)return null;
+    state.searchFrames++;
+    updateDiagnosticsFromCandidate([svg],true,state.searchFrames,validation,true);
+
+    return {
+      results:[svg],
+      efficiency:Math.min(1,(placed.reduce((sum,item)=>sum+item.bounds.width*item.bounds.height,0))/Math.max(1,usableW*usableH)),
+      placed:placed.length,
+      total:items.length,
+      sheet,
+      frame:state.searchFrames,
+      validation,
+      fallback:true
+    };
+  }catch(err){
+    console.warn("SheetNest bounding-box fallback:",err);
+    return null;
+  }
+}
+
 async function searchBestNextSheet(remaining,allInstances,orientations,runId,perf,usedUnitIds){
   if(Array.isArray(remaining)&&remaining.length===1){
     for(const orientation of orientations||[]){
@@ -1831,7 +1983,26 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
           :Math.max(2200,Number(perf.sheetCandidateMs)||4000);
         const runBest=await startOneRun(orientation,budget,runId,pool,perf);
         if(!runBest?.results?.length)continue;
-        const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
+        let candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
+
+        // Если NFP смог разместить только одну деталь из многодетального
+        // пула, не считаем это хорошим раскроем: пробуем безопасную
+        // габаритную компоновку и используем её только если она кладёт
+        // больше деталей на лист.
+        if(pool.length>1&&(!candidate||candidate.newCount<Math.min(2,pool.length))){
+          const fallback=buildBoundingBoxFallbackCandidate(pool,orientation,runId);
+          if(fallback){
+            const fallbackCandidate=chooseBestNestingSheet(
+              fallback.results,usedUnitIds,allInstances,orientation
+            );
+            if(fallbackCandidate&&(!candidate||fallbackCandidate.newCount>candidate.newCount)){
+              candidate=fallbackCandidate;
+              candidate.fallback=true;
+              candidate.fallbackPlaced=fallback.placed;
+            }
+          }
+        }
+
         if(!candidate)continue;
         candidate.orientation=orientation;
         candidate.poolSize=pool.length;
