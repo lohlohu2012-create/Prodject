@@ -1746,6 +1746,7 @@ async function runSearch(options={}){
   initializeInstanceDiagnostics();
   const preflight=preflightNestingInstances(allInstances,orientations);
   const blockedInstances=preflight.blocked;
+  renderDiagnosticsPanel();
   if(!preflight.fit.length){
     const blockedNames=blockedInstances.slice(0,6).map(item=>item.instance.instanceId).join(", ");
     throw new Error("Ни одна деталь не помещается на лист. Проверьте размеры листа/поле/зазор. Проблемные instanceId: "+blockedNames);
