@@ -1201,7 +1201,18 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
       if(!state.running||runId!==state.runId||attemptId!==state.engineAttemptId){settle("stale");return;}
       updateProgress();
     };
-    timer=setTimeout(()=>settle("timeout"),Math.max(1800,Number(runDurationMs)||1800));
+    timer=setTimeout(()=>{
+      activeInstances.forEach(instance=>{
+        const entry=state.instanceDiagnostics?.[instance.instanceId];
+        if(entry&&!entry.finalUnitIds.length){
+          entry.status="candidate";
+          entry.stage="NFP / timeout";
+          entry.issue="Попытка остановлена по времени до получения нового валидного кандидата.";
+        }
+      });
+      if(!perf.benchmark)renderDiagnosticsPanel();
+      settle("timeout");
+    },Math.max(1800,Number(runDurationMs)||1800));
     interval=setInterval(updateTimer,120);
     try{
       const started=SvgNest.start(
@@ -1251,6 +1262,14 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
         },
         err=>{
           attemptError=err instanceof Error?err:new Error(String(err||"Ошибка NFP worker"));
+          activeInstances.forEach(instance=>{
+            const entry=state.instanceDiagnostics?.[instance.instanceId];
+            if(!entry)return;
+            entry.status=entry.status==="placed"?"placed":"candidate";
+            entry.stage="NFP / worker";
+            entry.issue="Ошибка расчёта: "+attemptError.message;
+          });
+          if(!perf.benchmark)renderDiagnosticsPanel();
           settle("engine-error");
         }
       );
