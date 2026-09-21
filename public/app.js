@@ -1,4 +1,4 @@
-const SHEETNEST_ENGINE_BUILD="20260921-nfp-fallback-v2";
+const SHEETNEST_ENGINE_BUILD="20260921-stable-large-order-hotfix-v1";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
@@ -64,37 +64,37 @@ function adaptiveNestingConfig(orderSize){
   const rotations= q.mode==="max"
     ?Math.max(1,Math.min(4,Math.floor(readNumber("rotations",2))))
     :Math.max(1,Math.min(2,Math.floor(readNumber("rotations",2))));
-  const populationCap=orderSize>120?(q.mode==="max"?18:(q.mode==="fast"?10:12)):(q.mode==="max"?24:(q.mode==="fast"?10:16));
+  const populationCap=orderSize>120?(q.mode==="max"?20:(q.mode==="fast"?12:14)):(q.mode==="max"?26:(q.mode==="fast"?12:18));
   const populationSize=Math.min(q.populationSize,populationCap);
-  const mutationRate=Math.min(q.mutationRate,q.mode==="max"?16:(q.mode==="fast"?10:13));
+  const mutationRate=Math.min(q.mutationRate,q.mode==="max"?17:(q.mode==="fast"?11:14));
   const batchMs=hugeLocal
-    ?(q.mode==="max"?5000:(q.mode==="fast"?2500:3500))
+    ?(q.mode==="max"?7000:(q.mode==="fast"?4000:5000))
     :(q.mode==="max"?8000:(q.mode==="fast"?4000:6000));
   return{
     ...q,
     rotations,
-    populationSize:hugeLocal?Math.min(populationSize,q.mode==="max"?14:10):populationSize,
-    mutationRate:hugeLocal?Math.min(mutationRate,q.mode==="max"?14:11):mutationRate,
+    populationSize:hugeLocal?Math.min(populationSize,q.mode==="max"?18:14):populationSize,
+    mutationRate:hugeLocal?Math.min(mutationRate,q.mode==="max"?15:12):mutationRate,
     batchMs,
-    rescueAttempts:hugeLocal?2:(orderSize>120?4:6),
-    refillCandidates:hugeLocal?4:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
-    refillPasses:hugeLocal?1:3,
+    rescueAttempts:hugeLocal?4:(orderSize>120?4:6),
+    refillCandidates:hugeLocal?6:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
+    refillPasses:hugeLocal?2:3,
     refillSheets:999,
     poolMax:local
-      ?(veryLargeLocal?(q.mode==="max"?6:5):(hugeLocal?(q.mode==="max"?8:6):(q.mode==="max"?12:10)))
+      ?(veryLargeLocal?(q.mode==="max"?10:8):(hugeLocal?(q.mode==="max"?12:10):(q.mode==="max"?14:12)))
       :(q.mode==="max"?24:20),
     candidateVariants:q.mode==="max"
-      ?(local?(hugeLocal?1:2):4)
-      :(local?(hugeLocal?1:1):3),
+      ?(local?(hugeLocal?2:3):4)
+      :(local?(hugeLocal?2:2):3),
     sheetCandidateMs:local
       ?(hugeLocal
-        ?(q.mode==="max"?3000:(q.mode==="fast"?1400:1800))
-        :(q.mode==="max"?6000:(q.mode==="fast"?2800:4200)))
+        ?(q.mode==="max"?5500:(q.mode==="fast"?3200:4500))
+        :(q.mode==="max"?6500:(q.mode==="fast"?3200:4800)))
       :(q.mode==="max"?8500:(q.mode==="fast"?3500:6500)),
     sheetPenalty:q.mode==="max"?2.8:2.4,
     fillWeight:q.mode==="max"?1.7:1.5,
     densePlacementScoring:true,
-    secondOrientationThreshold:hugeLocal?1:0.72,
+    secondOrientationThreshold:hugeLocal?0.6:0.72,
     local
   };
 }
@@ -1791,12 +1791,12 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
   const initialSize=Math.min(estimateProgressivePoolSize(remaining,orientations[0],perf),remaining.length);
   const fastLocal=Boolean(perf.local&&remaining.length>28);
   const sizes=(fastLocal
-    ?[initialSize,Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)]
+    ?[initialSize,Math.min(12,remaining.length),Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)]
     :[initialSize,Math.min(16,remaining.length),Math.min(12,remaining.length),Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)])
     .filter((n,i,a)=>n>0&&a.indexOf(n)===i);
   let best=null;
   let attempted=0;
-  const maxAttempts=fastLocal?(remaining.length>80?4:6):12;
+  const maxAttempts=fastLocal?(remaining.length>140?8:10):12;
 
   for(const size of sizes){
     const remainingAttempts=maxAttempts-attempted;
@@ -1807,7 +1807,7 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
       for(const orientation of orientations){
         if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
         attempted++;
-        const budget=Math.max(1400,Number(perf.sheetCandidateMs)||3000);
+        const budget=Math.max(2200,Number(perf.sheetCandidateMs)||4000);
         const runBest=await startOneRun(orientation,budget,runId,pool,perf);
         if(!runBest?.results?.length)continue;
         const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
@@ -1846,7 +1846,7 @@ async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,re
   const refill=await refillCommittedSheets(
     committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,
     Math.max(1600,Number(perf.sheetCandidateMs)||3000),perf,
-    {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(4,Number(perf.refillCandidates||6)),12),maxPasses:Math.max(1,Number(perf.refillPasses)||1),maxSheets:1}
+    {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(6,Number(perf.refillCandidates||8)),16),maxPasses:Math.max(2,Number(perf.refillPasses)||2),maxSheets:1}
   );
   remaining=refill.remaining;
   return {remaining,committed:true,sheetIndex};
