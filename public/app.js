@@ -1,5 +1,5 @@
-const SHEETNEST_ENGINE_BUILD="20260921-two-criteria-global-compact-v1";
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
+const SHEETNEST_ENGINE_BUILD="20260921-stability-pass-v1";
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false,runStage:"Готово",runDeadline:0,runLastProgressAt:0,runWatchdogTimer:null,runWatchdogReason:"",runWatchdogStallMs:15000};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -1211,17 +1211,53 @@ function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",
   });
   $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0||state.running;applyCanvasZoom();
 }
+function runLimitForOrder(orderSize,mode){
+  const base=mode==="max"?300000:mode==="fast"?30000:120000;
+  const extra=Number(orderSize||0)>120?(mode==="max"?60000:30000):Number(orderSize||0)>80?(mode==="max"?30000:15000):0;
+  return base+extra;
+}
+function touchRunProgress(){state.runLastProgressAt=Date.now()}
+function setRunStage(stage,detail=""){state.runStage=stage;touchRunProgress();if(state.running){const remaining=Math.max(0,Math.ceil((state.runDeadline-Date.now())/1000));$("runInfo").textContent=detail?stage+" · "+detail+" · "+remaining+" с":stage+" · "+remaining+" с"}}
+function stopRunWatchdog(){if(state.runWatchdogTimer){clearInterval(state.runWatchdogTimer);state.runWatchdogTimer=null}}
+function startRunWatchdog(runId,limitMs){
+  stopRunWatchdog();
+  state.runDeadline=Date.now()+Math.max(10000,Number(limitMs)||120000);
+  state.runLastProgressAt=Date.now();
+  state.runWatchdogReason="";
+  state.runWatchdogTimer=setInterval(()=>{
+    if(!state.running||state.runId!==runId){stopRunWatchdog();return}
+    const now=Date.now(),left=state.runDeadline-now,stall=now-state.runLastProgressAt;
+    if(left<=0){
+      state.runWatchdogReason="global-timeout";
+      state.running=false;
+      state.runId+=1;
+      try{SvgNest.stop()}catch(_){ }
+      $("progressBar").style.width="100%";
+      $("runInfo").textContent="Остановлено watchdog: превышен общий лимит расчёта";
+      status("Расчёт остановлен по таймауту");
+      stopRunWatchdog();
+      return;
+    }
+    if(stall>state.runWatchdogStallMs&&state.runStage!=="Финализация"){
+      $("runInfo").textContent=state.runStage+" · нет нового результата "+Math.round(stall/1000)+" с · осталось "+Math.ceil(left/1000)+" с";
+    }
+  },250);
+}
 function updateProgress(){
   if(!state.running)return;
-  const elapsed=Date.now()-state.startedAt,p=Math.min(1,elapsed/state.durationMs);
-  $("progressBar").style.width=`${Math.round(p*100)}%`;
-  $("runInfo").textContent=`Перебираем раскладки · кадр ${state.searchFrames} · осталось ${Math.max(0,Math.ceil((state.durationMs-elapsed)/1000))} с`;
+  const elapsed=Date.now()-state.startedAt;
+  const total=Math.max(1,state.durationMs);
+  const p=Math.min(.98,elapsed/total);
+  $("progressBar").style.width=(Math.round(p*100))+"%";
+  const remaining=Math.max(0,Math.ceil((state.runDeadline-Date.now())/1000));
+  $("runInfo").textContent=state.runStage+" · кадр "+state.searchFrames+" · осталось "+remaining+" с";
 }
 
 
 function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=null){
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
   const perf=runtimeConfig||adaptiveNestingConfig(activeInstances.length);
+  setRunStage("NFP","подготовка попытки "+(state.engineAttemptId+1));
   const attemptId=++state.engineAttemptId;
   resetEngine(perf);
   const expectedTotal=nestingUnitCount(activeInstances);
@@ -1292,6 +1328,7 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
           state.lastValidation=validation;
           const shownPlaced=validation.unique;
           const now=Date.now();
+          touchRunProgress();
           const renderSearch=!perf.benchmark&&(now-state.lastSearchRenderAt>=450||isBest);
           const renderDiagnostics=!perf.benchmark&&(!activeInstances.length||now-state.lastDiagnosticsRenderAt>=650||isBest);
           if(renderDiagnostics){
@@ -2203,10 +2240,14 @@ async function runSearch(options={}){
   state.bestFrames=0;
 
   const perf=benchmark?benchmarkRuntimeConfig(allInstances.length,benchmarkMode,benchmarkBudgetMs):adaptiveNestingConfig(allInstances.length);
+  const runLimitMs=benchmark?Math.max(benchmarkBudgetMs*4,90000):runLimitForOrder(allInstances.length,perf.mode);
   const poolSizeEstimate=estimateProgressivePoolSize(allInstances,orientations[0],perf);
   const estimatedSheets=Math.max(1,Math.ceil(totalUnits/Math.max(4,Math.floor(poolSizeEstimate*.55))));
   state.durationMs=Math.max(1,estimatedSheets*Math.max(1,Number(perf.candidateVariants||2))*orientations.length*Math.max(1200,Number(perf.sheetCandidateMs)||3000));
   state.startedAt=Date.now();
+  state.durationMs=runLimitMs;
+  setRunStage("Подготовка",totalUnits+" units · лимит "+Math.ceil(runLimitMs/1000)+" с");
+  startRunWatchdog(runId,runLimitMs);
   $("progressBar").style.width="0%";
 
   const committedSheets=[];
@@ -2218,7 +2259,7 @@ async function runSearch(options={}){
 
   try{
     while(remaining.length&&state.running&&sheetNo<Math.max(4,totalUnits)){
-      $("runInfo").textContent="Поиск листа "+(sheetNo+1)+" · осталось "+remaining.length+" экземпляров · варианты "+(perf.candidateVariants||1);
+      setRunStage("Поиск листа","лист "+(sheetNo+1)+" · осталось "+remaining.length+" экземпляров · варианты "+(perf.candidateVariants||1));
 
       const search=await searchBestNextSheet(
         remaining,allInstances,orientations,runId,perf,usedUnitIds
@@ -2243,12 +2284,14 @@ async function runSearch(options={}){
           };
           const progress=Math.min(.92,usedUnitIds.size/Math.max(1,totalUnits)*.92);
           $("progressBar").style.width=Math.round(progress*100)+"%";
+          touchRunProgress();
           $("runInfo").textContent="Лист "+sheetNo+" готов · "+search.best.newCount+" новых деталей · заполнение кандидата "+Math.round(search.best.fill*100)+"% · осталось "+remaining.length;
           await new Promise(resolve=>setTimeout(resolve,0));
           continue;
         }
       }
 
+      setRunStage("Rescue","прямое размещение после остановки поиска");
       // Последняя попытка — одиночные элементы, чтобы не считать деталь
       // потерянной только из-за неудачного большого NFP-пакета.
       stallCount++;
@@ -2293,7 +2336,8 @@ async function runSearch(options={}){
     // 2) при том же числе листов — максимум полезного заполнения.
     // Сначала пытаемся полностью убрать последний лист, перепаковывая его
     // детали на уже существующие листы.
-    if(!benchmark&&committedSheets.length>1&&state.running){
+    setRunStage("Глобальная оптимизация","проверка возможности убрать лишний лист");
+    if(committedSheets.length>1&&state.running&&(!benchmark||benchmarkMode==="optimized")){
       const compacted=await compactCommittedSheets(
         committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,perf
       );
@@ -2311,6 +2355,7 @@ async function runSearch(options={}){
       }
     }
 
+    setRunStage("Финализация",finalPlacedUnits+"/"+totalUnits+" units");
     const finalPlacedUnits=usedUnitIds.size;
     state.resultSvgs=committedSheets;
     state.bestResultSvgs=committedSheets;
@@ -2377,6 +2422,7 @@ async function runSearch(options={}){
       status("Нет валидной раскладки");
     }
   }finally{
+    stopRunWatchdog();
     try{SvgNest.stop()}catch(_){}
     state.running=false;
     state.benchmarkActive=false;
@@ -2514,6 +2560,7 @@ async function runBenchmark(){
     alert("Benchmark завершился с ошибкой: "+err.message);
   }finally{
     Object.assign(state,saved);
+    stopRunWatchdog();
     state.running=false;
     state.benchmarkActive=false;
     state.benchmarkActive=false;
