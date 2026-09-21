@@ -5,7 +5,7 @@ const VERSION="AC1015";
 function layerName(v,fallback){const s=String(v||fallback||"DETAIL").replace(/[^A-Za-z0-9_.-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,180);return s||fallback||"DETAIL"}
 function fmt(v){return (Number.isFinite(v)?v:0).toFixed(4)}
 function point(m,x,y){return{x:m.a*x+m.c*y+m.e,y:m.b*x+m.d*y+m.f}}
-function header(){return ["0","SECTION","2","HEADER","9","$ACADVER","1",VERSION,"9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","ENTITIES"].join("\n")+"\n"}
+function header(ext){return ["0","SECTION","2","HEADER","9","$ACADVER","1",VERSION,"9","$INSUNITS","70","4","9","$EXTMIN","10",fmt(ext.minX),"20",fmt(ext.minY),"9","$EXTMAX","10",fmt(ext.maxX),"20",fmt(ext.maxY),"0","ENDSEC","0","SECTION","2","ENTITIES"].join("\n")+"\n"}
 function footer(){return "0\nENDSEC\n0\nEOF\n"}
 function lw(out,points,layer,closed){
   if(!points||points.length<2)return;
@@ -16,9 +16,11 @@ function lw(out,points,layer,closed){
     if(!q||Math.hypot(q.x-p.x,q.y-p.y)>1e-7)clean.push(p);
   }
   if(clean.length<2)return;
-  if(closed&&Math.hypot(clean[0].x-clean[clean.length-1].x,clean[0].y-clean[clean.length-1].y)<1e-7)clean.pop();
+  const endpointsCoincident=clean.length>2&&Math.hypot(clean[0].x-clean[clean.length-1].x,clean[0].y-clean[clean.length-1].y)<1e-5;
+  if((closed||endpointsCoincident)&&endpointsCoincident)clean.pop();
   if(clean.length<2)return;
-  out.push("0","LWPOLYLINE","8",layerName(layer,"DETAIL"),"90",String(clean.length),"70",closed?"1":"0");
+  const isClosed=Boolean(closed||endpointsCoincident);
+  out.push("0","LWPOLYLINE","8",layerName(layer,"DETAIL"),"90",String(clean.length),"70",isClosed?"1":"0");
   for(const p of clean)out.push("10",fmt(p.x),"20",fmt(p.y));
 }
 function geometry(el,matrix){
@@ -64,13 +66,22 @@ function toDxf(svg,index){
   if(!svg)throw new Error("Отсутствует лист "+(index+1));
   const host=document.createElement("div");
   host.style.position="fixed";host.style.left="-100000px";host.style.top="0";host.style.width="1px";host.style.height="1px";host.style.visibility="hidden";
-  const clone=svg.cloneNode(true);clone.removeAttribute("width");clone.removeAttribute("height");clone.setAttribute("xmlns","http://www.w3.org/2000/svg");
+  const clone=svg.cloneNode(true);clone.setAttribute("xmlns","http://www.w3.org/2000/svg");
+  const sheetW=Number(svg.getAttribute("data-sheet-w"))||Number(svg.getAttribute("width"))||Number((svg.getAttribute("viewBox")||"").trim().split(/[\\s,]+/)[2])||0;
+  const sheetH=Number(svg.getAttribute("data-sheet-h"))||Number(svg.getAttribute("height"))||Number((svg.getAttribute("viewBox")||"").trim().split(/[\\s,]+/)[3])||0;
+  clone.removeAttribute("class");
+  if(sheetW>0)clone.style.setProperty("width",sheetW+"px","important");
+  if(sheetH>0)clone.style.setProperty("height",sheetH+"px","important");
+  clone.style.setProperty("display","block","important");
   host.appendChild(clone);document.body.appendChild(host);
-  const out=[header()];
+  const out=[];
+  const audit={minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity,sheetEntities:0,detailEntities:0,issues:[]};
+  const includeBounds=points=>{for(const p of points){audit.minX=Math.min(audit.minX,p.x);audit.minY=Math.min(audit.minY,p.y);audit.maxX=Math.max(audit.maxX,p.x);audit.maxY=Math.max(audit.maxY,p.y)}};
   try{
-    clone.querySelectorAll("#sheet-bin,.bin").forEach(bin=>{
+    const sheetBins=[...clone.querySelectorAll("#sheet-bin,.bin")];
+    sheetBins.forEach(bin=>{
       const matrix=bin.getCTM()||clone.getCTM();if(!matrix)return;
-      const g=geometry(bin,matrix);lw(out,g.points,"SHEET",true);
+      const g=geometry(bin,matrix);if(g.points.length){audit.sheetEntities++;includeBounds(g.points);lw(out,g.points,"SHEET",true)}
     });
     clone.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
       const unit=group.getAttribute("data-sheetnest-unit-id")||"UNIT";
@@ -79,10 +90,22 @@ function toDxf(svg,index){
       group.querySelectorAll("path,polyline,polygon,rect,circle,ellipse,line").forEach(el=>{
         if(el.closest("defs,clipPath,mask,pattern"))return;
         const matrix=el.getCTM()||clone.getCTM();if(!matrix)return;
-        const g=geometry(el,matrix);lw(out,g.points,layer,g.closed);
+        const g=geometry(el,matrix);
+        if(g.points.length){audit.detailEntities++;includeBounds(g.points);lw(out,g.points,layer,g.closed)}
       });
     });
-    out.push(footer());return out.join("\n");
+    if(sheetBins.length!==1)audit.issues.push("Ожидался ровно один контур листа, найдено "+sheetBins.length+".");
+    if(sheetW>0&&sheetH>0&&audit.sheetEntities===1){
+      const sw=audit.maxX-audit.minX,sh=audit.maxY-audit.minY;
+      if(Math.abs(sw-sheetW)>0.1||Math.abs(sh-sheetH)>0.1)audit.issues.push("Контур листа имеет "+sw.toFixed(3)+"×"+sh.toFixed(3)+" вместо "+sheetW+"×"+sheetH+" мм.");
+      const tol=0.1;
+      if(audit.minX<-tol||audit.minY<-tol||audit.maxX>sheetW+tol||audit.maxY>sheetH+tol)audit.issues.push("Часть геометрии деталей выходит за границы листа.");
+    }
+    if(audit.detailEntities===0)audit.issues.push("В результате нет ни одного контура детали.");
+    if(!Number.isFinite(audit.minX))audit.issues.push("Экспорт не содержит геометрических сущностей.");
+    if(audit.issues.length)throw new Error("Проверка DXF не пройдена: "+audit.issues.join(" "));
+    out.unshift(header({minX:audit.minX,minY:audit.minY,maxX:audit.maxX,maxY:audit.maxY}));
+    return out.join("\n");
   }finally{host.remove()}
 }
 function download(content,name){
