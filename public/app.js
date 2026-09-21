@@ -1,10 +1,48 @@
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,instanceDiagnostics:{},unitToInstance:{}};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
 
 function readNumber(id,fallback){const n=Number($(id).value);return Number.isFinite(n)?n:fallback}
-function qualityConfig(){const q=$("quality").value;if(q==="fast")return{seconds:10,populationSize:12,mutationRate:12};if(q==="max")return{seconds:90,populationSize:40,mutationRate:18};return{seconds:30,populationSize:24,mutationRate:15}}
+function qualityConfig(){
+  const q=$("quality").value;
+  if(q==="fast")return{mode:"fast",seconds:10,populationSize:12,mutationRate:12};
+  if(q==="max")return{mode:"max",seconds:90,populationSize:40,mutationRate:18};
+  return{mode:"normal",seconds:30,populationSize:24,mutationRate:15};
+}
+function adaptiveNestingConfig(orderSize){
+  const q=qualityConfig();
+  const large=orderSize>28;
+  if(!large){
+    return{
+      ...q,
+      rotations:Math.max(1,Math.floor(readNumber("rotations",2))),
+      batchMs:Math.max(4500,Math.min(q.seconds*1000,q.mode==="max"?14000:8500)),
+      rescueAttempts:4,
+      refillCandidates:8,
+      refillPasses:2,
+      refillSheets:999,
+      secondOrientationThreshold:0
+    };
+  }
+  const rotations=Math.max(1,Math.min(2,Math.floor(readNumber("rotations",2))));
+  const populationCap=orderSize>120?(q.mode==="max"?16:(q.mode==="fast"?8:10)):(q.mode==="max"?20:(q.mode==="fast"?9:13));
+  const populationSize=Math.min(q.populationSize,populationCap);
+  const mutationRate=Math.min(q.mutationRate,q.mode==="max"?15:(q.mode==="fast"?10:12));
+  const batchMs=q.mode==="max"?6500:(q.mode==="fast"?2800:4200);
+  return{
+    ...q,
+    rotations,
+    populationSize,
+    mutationRate,
+    batchMs,
+    rescueAttempts:orderSize>120?2:3,
+    refillCandidates:6,
+    refillPasses:1,
+    refillSheets:Math.min(4,Math.max(1,Math.ceil(orderSize/40))),
+    secondOrientationThreshold:0.72
+  };
+}
 function getSheet(){const w=readNumber("sheetW",1500),h=readNumber("sheetH",3000);if(w<=0||h<=0)throw new Error("Размер листа должен быть больше нуля.");return{w,h,auto:$("orientation").value==="auto"}}
 function escapeHtml(s){return String(s).replace(/[&<>"\']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 
@@ -474,10 +512,18 @@ function buildNestingSvgForInstances(w,h,instances){
 function buildNestingSvg(w,h){
   return buildNestingSvgForInstances(w,h,buildNestingInstances());
 }
-function resetEngine(){
+function resetEngine(runtimeConfig=null){
   try{SvgNest.stop()}catch(_){}
-  const q=qualityConfig();
-  SvgNest.config({spacing:readNumber("gap",2),rotations:Math.max(1,Math.floor(readNumber("rotations",2))),populationSize:q.populationSize,mutationRate:q.mutationRate,curveTolerance:.2,useHoles:true,exploreConcave:true});
+  const q=runtimeConfig||adaptiveNestingConfig(0);
+  SvgNest.config({
+    spacing:readNumber("gap",2),
+    rotations:q.rotations||Math.max(1,Math.floor(readNumber("rotations",2))),
+    populationSize:q.populationSize,
+    mutationRate:q.mutationRate,
+    curveTolerance:.2,
+    useHoles:true,
+    exploreConcave:true
+  });
 }
 
 function addSvgEl(svg,name,attrs){
@@ -814,7 +860,7 @@ function registerParsedUnits(parsed,scopeIds=null){
   });
   renderDiagnosticsPanel();
 }
-function updateDiagnosticsFromCandidate(svgList,isBest,frame,validation){
+function updateDiagnosticsFromCandidate(svgList,isBest,frame,validation,renderNow=true){
   const info=collectPlacedUnitIds(svgList);
   info.unitIds.forEach(unitId=>{
     const instanceId=state.unitToInstance[unitId],entry=state.instanceDiagnostics[instanceId];
@@ -828,7 +874,7 @@ function updateDiagnosticsFromCandidate(svgList,isBest,frame,validation){
       entry.issue="Вариант содержит "+entry.candidateUnitIds.length+" из "+entry.expectedUnits+" units.";
     }
   });
-  renderDiagnosticsPanel();
+  if(renderNow)renderDiagnosticsPanel();
 }
 function finalizeDiagnostics(svgList,reason="complete"){
   const finalSet=new Set(collectPlacedUnitIds(svgList).unitIds);
@@ -929,9 +975,10 @@ function updateProgress(){
 }
 
 
-function startOneRun(sheet,runDurationMs,runId,workInstances=null){
-  resetEngine();
+function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=null){
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
+  const perf=runtimeConfig||adaptiveNestingConfig(activeInstances.length);
+  resetEngine(perf);
   const expectedTotal=nestingUnitCount(activeInstances);
   const scopeIds=activeInstances.map(item=>item.instanceId);
   const nestingSvg=buildNestingSvgForInstances(sheet.w,sheet.h,activeInstances);
@@ -973,8 +1020,16 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
           state.searchFrames++;
           const validation=validateNestingResult(svglist,placed,expectedTotal);
           state.lastValidation=validation;
-          updateDiagnosticsFromCandidate(svglist,isBest,frame,validation);
           const shownPlaced=validation.unique;
+          const now=Date.now();
+          const renderSearch=now-state.lastSearchRenderAt>=450||isBest;
+          const renderDiagnostics=!activeInstances.length||now-state.lastDiagnosticsRenderAt>=650||isBest;
+          if(renderDiagnostics){
+            updateDiagnosticsFromCandidate(svglist,isBest,frame,validation,true);
+            state.lastDiagnosticsRenderAt=now;
+          }else{
+            updateDiagnosticsFromCandidate(svglist,isBest,frame,validation,false);
+          }
           const taggedResults=(svglist||[]).map(svg=>{
             try{
               svg.setAttribute("data-sheet-w",String(sheet.w));
@@ -996,7 +1051,10 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null){
           if(validation.valid&&(!runBest||betterNestingCandidate(candidate,runBest)))runBest=candidate;
 
           state.resultSvgs=svglist;
-          renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
+          if(renderSearch){
+            state.lastSearchRenderAt=now;
+            renderResults(svglist,efficiency,shownPlaced,expectedTotal,sheet,{mode:"search",frame,isBest});
+          }
           const tag=!validation.valid?"Непроверенный кандидат":(isBest?"Новый лучший":"Кандидат");
           $("runInfo").textContent=tag+" · кадр "+state.searchFrames+" · "+shownPlaced+"/"+expectedTotal+" деталей · "+Math.round((efficiency||0)*100)+"% заполнение";
           $("status").textContent=validation.valid?"Ищем раскладку…":"Проверяем геометрию результата…";
@@ -1090,13 +1148,20 @@ function uniqueInstances(list){
   return [...map.values()];
 }
 
-async function runPoolAcrossOrientations(instances,orientations,runId,runDurationMs){
+async function runPoolAcrossOrientations(instances,orientations,runId,runDurationMs,runtimeConfig=null){
   let best=null;
   const pool=uniqueInstances(instances);
+  const perf=runtimeConfig||adaptiveNestingConfig(pool.length);
   for(let oi=0;oi<orientations.length;oi++){
     if(!state.running||runId!==state.runId)break;
+    if(oi>0&&best){
+      const bestRatio=Number(best.placed||0)/Math.max(1,Number(best.total||0));
+      // Для больших заказов вторую ориентацию запускаем только если первая
+      // действительно не дала достаточно полного результата.
+      if(pool.length>28&&bestRatio>=perf.secondOrientationThreshold)break;
+    }
     const candidate=orientations[oi];
-    const runBest=await startOneRun(candidate,runDurationMs,runId,pool);
+    const runBest=await startOneRun(candidate,runDurationMs,runId,pool,perf);
     if(runBest){
       const current={
         results:runBest.results,
@@ -1126,15 +1191,19 @@ function appendFreshResultSheets(target,svgList,usedUnitIds,sheet){
   return accepted;
 }
 
-async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,runDurationMs){
+async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,runDurationMs,runtimeConfig=null){
   let changedAny=false;
-  const maxPasses=2;
-
-  for(let pass=0;pass<maxPasses&&state.running;pass++){
+  const perf=runtimeConfig||adaptiveNestingConfig(allInstances.length);
+  const maxPasses=perf.refillPasses;
+  const candidateLimit=perf.refillCandidates;
+  const sheetOrder=committedSheets.map((svg,index)=>({svg,index,count:resultUnitIds(svg).size}))
+    .sort((a,b)=>a.count-b.count)
+    .slice(0,perf.refillSheets);
     let changedThisPass=false;
 
-    for(let sheetIndex=0;sheetIndex<committedSheets.length;sheetIndex++){
+    for(const sheetRef of sheetOrder){
       if(!state.running)break;
+      const sheetIndex=sheetRef.index;
       const currentSheet=committedSheets[sheetIndex];
       const incumbentUnitIds=resultUnitIds(currentSheet);
       if(incumbentUnitIds.size===0||incumbentUnitIds.size>36)continue;
@@ -1143,7 +1212,7 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
       const incumbentInstances=(allInstances||[]).filter(item=>incumbentInstanceIds.has(item.instanceId));
       if(!incumbentInstances.length)continue;
 
-      const orderedRemaining=selectNestingBatch(remaining,10,pass%2===0?"small":"large");
+      const orderedRemaining=selectNestingBatch(remaining,candidateLimit,pass%2===0?"small":"large");
       if(!orderedRemaining.length)break;
 
       const pool=uniqueInstances(incumbentInstances.concat(orderedRemaining));
@@ -1151,7 +1220,8 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
         pool,
         orientations,
         runId,
-        Math.max(4500,Math.min(runDurationMs,7000))
+        Math.max(2800,Math.min(runDurationMs,perf.mode==="max"?5000:3500)),
+        perf
       );
       if(!candidate||!candidate.results?.length)continue;
 
@@ -1232,8 +1302,13 @@ async function runSearch(){
   state.bestFrames=0;
 
   const largeOrder=allInstances.length>28;
-  const batchSize=allInstances.length>120?14:(allInstances.length>70?18:(allInstances.length>40?22:allInstances.length));
-  const batchRunMs=largeOrder?Math.max(7000,Math.min(14000,q.seconds*1000/Math.max(1,orientations.length))):Math.max(7000,q.seconds*1000/Math.max(1,orientations.length));
+  const perf=adaptiveNestingConfig(allInstances.length);
+  const batchSize=largeOrder
+    ?(allInstances.length>120?14:(allInstances.length>70?16:18))
+    :allInstances.length;
+  const batchRunMs=largeOrder
+    ?perf.batchMs
+    :Math.max(5000,Math.min(q.seconds*1000/Math.max(1,orientations.length),perf.batchMs));
   const estimatedBatches=Math.max(1,Math.ceil(allInstances.length/Math.max(1,batchSize)));
   state.durationMs=Math.max(1,(estimatedBatches*orientations.length+6)*batchRunMs);
   state.startedAt=Date.now();
@@ -1267,7 +1342,7 @@ async function runSearch(){
       if(!pool.length)break;
 
       $("runInfo").textContent="Основной проход · "+remaining.length+" экземпляров осталось · режим "+(mode==="small"?"дозаполнение":"плотная укладка");
-      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,batchRunMs);
+      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,batchRunMs,perf);
 
       if(candidate?.results?.length){
         appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
@@ -1282,7 +1357,7 @@ async function runSearch(){
         mode=mode==="large"?"small":"large";
       }else{
         let rescued=false;
-        const rescueCandidates=selectNestingBatch(remaining,Math.min(10,pool.length),mode);
+        const rescueCandidates=selectNestingBatch(remaining,Math.min(perf.rescueAttempts,pool.length),mode);
         for(const single of rescueCandidates){
           if(!state.running)break;
           const singleBefore=usedUnitIds.size;
@@ -1290,7 +1365,8 @@ async function runSearch(){
             [single],
             orientations,
             runId,
-            Math.max(5000,Math.min(batchRunMs,9000))
+            Math.max(2200,Math.min(batchRunMs,perf.mode==="max"?4500:3200)),
+            perf
           );
           if(singleBest?.results?.length){
             appendFreshResultSheets(committedSheets,singleBest.results,usedUnitIds,singleBest.sheet);
@@ -1330,7 +1406,8 @@ async function runSearch(){
         allInstances,
         orientations,
         runId,
-        batchRunMs
+        batchRunMs,
+        perf
       );
       remaining=refill.remaining;
     }
@@ -1339,7 +1416,7 @@ async function runSearch(){
     while(state.running&&remaining.length&&extraPass++<3){
       const before=usedUnitIds.size;
       const pool=selectNestingBatch(remaining,Math.min(batchSize,18),extraPass%2?"small":"large");
-      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,Math.max(5500,Math.min(batchRunMs,9000)));
+      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,Math.max(2200,Math.min(batchRunMs,perf.mode==="max"?4500:3200)),perf);
       if(candidate?.results?.length)appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
       remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
       if(usedUnitIds.size===before)break;
