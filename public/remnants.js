@@ -260,6 +260,10 @@
             // Защита от сохранения всего исходного листа как "делового остатка".
             if(sheetArea>0 && polyArea/sheetArea>=0.995)continue;
             if(!Number.isFinite(b.width)||!Number.isFinite(b.height)||b.width<minStore||b.height<minStore)continue;
+            // В хранилище разрешаем только геометрию, которая реально проходит
+            // производственный критерий делового остатка с обеими ориентациями.
+            const businessFit=classify(poly0,num("remnantMinLength",500),num("remnantMinWidth",300),num("gap",2));
+            if(!businessFit.business)continue;
             const item={
               id:"REM-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),
               material:meta?.material||"",thickness:Number(meta?.thickness||0),
