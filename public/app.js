@@ -2429,6 +2429,7 @@ async function runSearch(options={}){
     try{SvgNest.stop()}catch(_){}
     state.running=false;
     window.SheetNestDxf?.update?.();
+    window.SheetNestLaser?.update?.();
     state.benchmarkActive=false;
     $("nestButton").disabled=false;
     $("stopButton").disabled=true;
@@ -2568,6 +2569,7 @@ async function runBenchmark(){
     state.running=false;
     state.benchmarkActive=false;
     state.benchmarkActive=false;
+    window.SheetNestLaser?.update?.();
     if(button)button.disabled=false;
     $("progressBar").style.width="0%";
     renderDiagnosticsPanel();
