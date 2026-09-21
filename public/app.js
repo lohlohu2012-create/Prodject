@@ -1209,7 +1209,7 @@ function renderResults(svgList,efficiency,placed,total,sheet,view={mode:"final",
     card.appendChild(title);card.appendChild(clone);
     const summary=document.createElement("div");summary.className="sheet-summary";summary.innerHTML=`<span>Поле: <strong>${meta.margin} мм</strong> · зазор: <strong>${meta.gap} мм</strong></span><span>Деталей: <strong>${placed||0}/${total||0}</strong></span>`;card.appendChild(summary);wrap.appendChild(card);
   });
-  $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0||state.running;applyCanvasZoom();
+  $("statSheets").textContent=svgList.length;$("statParts").textContent=placed||0;$("statEfficiency").textContent=`${Math.round((efficiency||0)*100)}%`;$("downloadButton").disabled=svgList.length===0||state.running;applyCanvasZoom();window.SheetNestDxf?.update?.();
 }
 function runLimitForOrder(orderSize,mode){
   const base=mode==="max"?300000:mode==="fast"?30000:120000;
@@ -2408,7 +2408,10 @@ async function runSearch(options={}){
     if(benchmark)return summary;
 
     $("progressBar").style.width="100%";
-    if(finalPlacedUnits>=totalUnits){
+    if(state.runWatchdogReason==="global-timeout"){
+      $("runInfo").textContent="Остановлено по общему таймауту · "+finalPlacedUnits+"/"+totalUnits+" деталей сохранено в лучшем найденном результате";
+      status("Расчёт остановлен по таймауту");
+    }else if(finalPlacedUnits>=totalUnits){
       $("runInfo").textContent="Готово · "+committedSheets.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · просмотрено "+state.searchFrames+" вариантов";
       status("Раскрой рассчитан");
     }else if(finalPlacedUnits>0){
@@ -2425,6 +2428,7 @@ async function runSearch(options={}){
     stopRunWatchdog();
     try{SvgNest.stop()}catch(_){}
     state.running=false;
+    window.SheetNestDxf?.update?.();
     state.benchmarkActive=false;
     $("nestButton").disabled=false;
     $("stopButton").disabled=true;
