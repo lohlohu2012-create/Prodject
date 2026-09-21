@@ -694,6 +694,21 @@
     try{applyCanvasZoom()}catch(err){console.warn("SheetNest: canvas zoom update skipped",err)}
   }
 
+  function styleLiveCandidateSvg(svg,label,index){
+    try{
+      const bin=svg?.querySelector("#sheet-bin,.bin");
+      if(!bin)return;
+      bin.setAttribute("fill","#b8c1ca");
+      bin.setAttribute("fill-opacity","0.92");
+      bin.setAttribute("stroke","#687481");
+      bin.setAttribute("stroke-width","0.9");
+      bin.setAttribute("vector-effect","non-scaling-stroke");
+      if(label==="remnant")bin.setAttribute("fill-opacity","0.72");
+    }catch(err){
+      console.warn("SheetNest: live candidate sheet styling skipped",err);
+    }
+  }
+
   function renderLiveCandidate(svgList,efficiency,placed,total,label,isBest){
     const wrap=$("canvasWrap");if(!wrap||!svgList?.length)return;
     wrap.innerHTML="";
@@ -703,6 +718,7 @@
       const head=document.createElement("div");head.className="result-title";
       head.innerHTML="<strong>"+(label==="remnant"?"Поиск в деловом остатке":"Поиск на новом листом")+" · лист "+(index+1)+"</strong><span>"+(isBest?"Новый лучший вариант":"Текущий кандидат")+"</span>";
       const clone=svg.cloneNode(true);clone.classList.add("sheet-svg");clone.removeAttribute("width");clone.removeAttribute("height");
+      styleLiveCandidateSvg(clone,label,index);
       card.appendChild(head);card.appendChild(clone);
       const summary=document.createElement("div");summary.className="sheet-summary";
       summary.innerHTML="<span>"+(label==="remnant"?"Деловой остаток":"Новый металлический лист")+"</span><span>Деталей: <strong>"+Number(placed||0)+"/"+Number(total||0)+"</strong> · заполнение: <strong>"+Math.round(Number(efficiency||0)*100)+"%</strong></span>";
