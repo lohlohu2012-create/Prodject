@@ -1669,7 +1669,7 @@ async function searchBestNextSheet(remaining,allInstances,orientations,runId,per
     .filter((n,i,a)=>n>0&&a.indexOf(n)===i);
   let best=null;
   let attempted=0;
-  const maxAttempts=perf.local?8:10;
+  const maxAttempts=perf.local?12:12;
 
   for(const size of sizes){
     const remainingAttempts=maxAttempts-attempted;
@@ -1830,7 +1830,7 @@ async function runSearch(options={}){
         }
         if(rescued)break;
       }
-      if(!rescued||stallCount>=3)break;
+      if(!rescued||stallCount>=5)break;
     }
 
     const finalPlacedUnits=usedUnitIds.size;
