@@ -29,6 +29,10 @@ assert(app.includes('window.SheetNestDxf?.update?.()'),"DXF button state is not 
 const exporter=read("public/dxf-export.js");
 assert(exporter.includes("LWPOLYLINE"),"DXF exporter does not emit LWPOLYLINE");
 assert(exporter.includes('"SHEET"'),"DXF exporter does not emit a sheet layer");
+assert(!exporter.includes('clone.removeAttribute("width")'),"DXF exporter must preserve nesting SVG width");
+assert(!exporter.includes('clone.removeAttribute("height")'),"DXF exporter must preserve nesting SVG height");
+assert(exporter.includes("sheetEntities"),"DXF exporter geometry audit is missing");
+assert(exporter.includes("Часть геометрии деталей выходит за границы листа"),"DXF exporter boundary validation is missing");
 const laser=read("public/laser-estimator.js");
 assert(laser.includes("BODOR_3KW"),"Laser estimator reference table is missing");
 assert(laser.includes("laserTotalTime"),"Laser result integration is missing");
