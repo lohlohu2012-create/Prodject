@@ -811,9 +811,17 @@
 				newsvg.setAttribute('width',binBounds.width + 'px');
 				newsvg.setAttribute('height',binBounds.height + 'px');
 				var binclone = bin.cloneNode(false);
-				
+
 				binclone.setAttribute('class','bin');
 				binclone.setAttribute('transform','translate('+(-binBounds.x)+' '+(-binBounds.y)+')');
+				// SvgNest strips source styles during parsing. Without an explicit
+				// fill, SVG falls back to the default black fill while a candidate
+				// is being rendered.
+				binclone.setAttribute('fill','#b8c1ca');
+				binclone.setAttribute('fill-opacity','0.92');
+				binclone.setAttribute('stroke','#687481');
+				binclone.setAttribute('stroke-width','0.9');
+				newsvg.setAttribute('preserveAspectRatio','xMidYMid meet');
 				newsvg.appendChild(binclone);
 
 				for(j=0; j<placement[i].length; j++){
