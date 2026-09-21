@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import base64
-import gzip
 import json
 import os
 import shutil
@@ -17,8 +15,8 @@ BROWSER = os.environ.get("BROWSER") or shutil.which("chromium") or shutil.which(
 if not BROWSER:
     raise SystemExit("Chromium/Chrome was not found")
 
-FIXTURE = ROOT / "tests" / "fixtures" / "Chertеж11.dxf.gz.b64"
-dxf_bytes = gzip.decompress(base64.b64decode(FIXTURE.read_text(encoding="ascii")))
+FIXTURE = ROOT / "tests" / "fixtures" / "Chertеж11-geometry.dxf"
+dxf_bytes = FIXTURE.read_bytes()
 
 with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup_errors=True) as tmp:
     tmp = Path(tmp)
