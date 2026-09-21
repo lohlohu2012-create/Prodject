@@ -295,6 +295,11 @@
 		}
 		
 		this.launchWorkers = function(tree, binPolygon, config, progressCallback, displayCallback, errorCallback, sessionId){
+			// Baseline benchmark mode intentionally disables persistent NFP caching.
+			// Clear the cache at the beginning of each GA generation in that mode.
+			if(config.persistNfpCache === false){
+				nfpCache = {};
+			}
 			function shuffle(array) {
 			  var currentIndex = array.length, temporaryValue, randomIndex ;
 
