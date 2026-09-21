@@ -21,7 +21,13 @@ function benchmarkRuntimeConfig(orderSize,mode,budgetMs){
     fastPlacementScoring:!baseline,
     secondOrientationThreshold:0,
     refillPasses:base.refillPasses,
-    refillSheets:base.refillSheets
+    refillSheets:base.refillSheets,
+    poolMax:base.poolMax,
+    candidateVariants:base.candidateVariants,
+    sheetCandidateMs:base.sheetCandidateMs,
+    sheetPenalty:baseline?1:base.sheetPenalty,
+    fillWeight:baseline?0:base.fillWeight,
+    densePlacementScoring:!baseline
   };
 }
 
@@ -37,6 +43,12 @@ function adaptiveNestingConfig(orderSize){
       refillCandidates:8,
       refillPasses:2,
       refillSheets:999,
+      poolMax:48,
+      candidateVariants:3,
+      sheetCandidateMs:q.mode==="max"?5200:(q.mode==="fast"?1800:3200),
+      sheetPenalty:2,
+      fillWeight:1.2,
+      densePlacementScoring:true,
       secondOrientationThreshold:0
     };
   }
@@ -57,6 +69,12 @@ function adaptiveNestingConfig(orderSize){
     refillCandidates:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
     refillPasses:2,
     refillSheets:999,
+    poolMax:orderSize>120?56:48,
+    candidateVariants:q.mode==="max"?4:(q.mode==="fast"?1:3),
+    sheetCandidateMs:q.mode==="max"?6200:(q.mode==="fast"?2200:3600),
+    sheetPenalty:2.4,
+    fillWeight:1.5,
+    densePlacementScoring:true,
     secondOrientationThreshold:0.72
   };
 }
@@ -687,6 +705,9 @@ function resetEngine(runtimeConfig=null){
     exploreConcave:true,
     persistNfpCache:q.persistNfpCache!==false,
     fastPlacementScoring:q.fastPlacementScoring!==false,
+    densePlacementScoring:q.densePlacementScoring!==false,
+    sheetPenalty:Number.isFinite(Number(q.sheetPenalty))?Number(q.sheetPenalty):2,
+    fillWeight:Number.isFinite(Number(q.fillWeight))?Number(q.fillWeight):1.2,
   });
 }
 
@@ -1401,13 +1422,13 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
       const sheetIndex=sheetRef.index;
       const currentSheet=committedSheets[sheetIndex];
       const incumbentUnitIds=resultUnitIds(currentSheet);
-      if(incumbentUnitIds.size===0||incumbentUnitIds.size>36)continue;
+      if(incumbentUnitIds.size===0||incumbentUnitIds.size>96)continue;
 
       const incumbentInstanceIds=resultInstanceIds(currentSheet);
       const incumbentInstances=(allInstances||[]).filter(item=>incumbentInstanceIds.has(item.instanceId));
       if(!incumbentInstances.length)continue;
 
-      const orderedRemaining=selectNestingBatch(remaining,candidateLimit,pass%2===0?"small":"large");
+      const orderedRemaining=selectNestingBatch(remaining,candidateLimit,"mixed");
       if(!orderedRemaining.length)break;
 
       const pool=uniqueInstances(incumbentInstances.concat(orderedRemaining));
