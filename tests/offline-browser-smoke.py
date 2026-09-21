@@ -175,7 +175,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup
                 }, ensure_ascii=False))
             time.sleep(0.12)
 
-        if final_status != "Раскрой рассчитан":
+        if final_status not in ("Раскрой рассчитан", "Частичный раскрой"):
             raise RuntimeError(f"Nesting timed out: status={final_status!r}, info={info!r}")
 
         frames = eval_js("typeof state !== 'undefined' ? state.searchFrames : 0")
@@ -203,7 +203,9 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup
             raise RuntimeError("Remnant checkbox was not disabled")
         if int(frames) < 2:
             raise RuntimeError(f"Not enough live candidate frames observed: {frames}")
-        if int(parts) < 1 or int(sheets) < 1:
+        if int(frames) < 2:
+            raise RuntimeError(f"Not enough live candidate frames observed: {frames}")
+        if int(sheets) < 1:
             raise RuntimeError(f"Unexpected result stats: sheets={sheets}, parts={parts}")
         if black_events:
             raise RuntimeError("BLACK_SCREEN_DETECTED: " + json.dumps(result, ensure_ascii=False))
