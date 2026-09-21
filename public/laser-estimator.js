@@ -50,7 +50,8 @@ function geometryLength(element){
   }
   if(tag==="rect"){const w=Math.max(0,Number(element.getAttribute("width")||0)),h=Math.max(0,Number(element.getAttribute("height")||0));return 2*(w+h)}
   if(tag==="circle"){const r=Math.max(0,Number(element.getAttribute("r")||0));return 2*Math.PI*r}
-  if(tag==="ellipse"){const a=Math.max(0,Number(element.getAttribute("rx")||0)),b=Math.max(0,Number(element.getAttribute("ry")||0));if(!a||!b)return 0;const h=Math.pow(a-b,2)/Math.pow(a+b,2);return Math.PI*(a+b)*(1+3*h/(10+Math.sqrt(4-3*h)))
+  if(tag==="ellipse"){const a=Math.max(0,Number(element.getAttribute("rx")||0)),b=Math.max(0,Number(element.getAttribute("ry")||0));if(!a||!b)return 0;const h=Math.pow(a-b,2)/Math.pow(a+b,2);return Math.PI*(a+b)*(1+3*h/(10+Math.sqrt(4-3*h)));
+  }
   return 0;
 }
 function primitiveStart(element){
