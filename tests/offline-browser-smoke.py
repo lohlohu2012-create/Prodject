@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import base64
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import random
 import time
 import urllib.request
 from pathlib import Path
@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup
     dxf_path.write_bytes(dxf_bytes)
 
     profile = tmp / "chrome-profile"
-    port = 9222
+    port = 9200 + (os.getpid() % 700)
     proc = subprocess.Popen(
         [
             BROWSER,
@@ -156,28 +156,11 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup
               })()
             """)
             if sample and sample.get("cards"):
-                shot = cdp("Page.captureScreenshot", {
-                    "format": "png",
-                    "fromSurface": True,
-                    "clip": {**sample["clip"], "scale": 1}
-                }).get("data")
-                dark_pct = None
-                mean_lum = None
-                if shot:
-                    from PIL import Image
-                    from io import BytesIO
-                    img = Image.open(BytesIO(base64.b64decode(shot))).convert("L")
-                    px = list(img.getdata())
-                    if px:
-                        mean_lum = sum(px) / len(px)
-                        dark_pct = sum(v < 25 for v in px) / len(px)
-                sample["darkPct"] = dark_pct
-                sample["meanLum"] = mean_lum
                 samples.append(sample)
                 black = (
-                    sample.get("binFill") == "rgb(0, 0, 0)"
-                    or sample.get("binFill") == "rgba(0, 0, 0, 1)"
-                    or (sample.get("meanLum") is not None and sample["meanLum"] < 35 and sample.get("darkPct", 0) > 0.75)
+                    sample.get("binFill") in ("rgb(0, 0, 0)", "rgba(0, 0, 0, 1)")
+                    or ('fill="#000"' in (sample.get("svgHtml") or "").lower())
+                    or ('fill="black"' in (sample.get("svgHtml") or "").lower())
                 )
                 if black:
                     black_events.append({"info": info, "sample": sample})
