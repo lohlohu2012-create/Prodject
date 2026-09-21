@@ -1,4 +1,4 @@
-const SHEETNEST_ENGINE_BUILD="20260921-compaction-fallback-v2";
+const SHEETNEST_ENGINE_BUILD="20260921-two-criteria-global-compact-v1";
 const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
@@ -1580,6 +1580,24 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
   return {remaining,changed:changedAny};
 }
 
+function globalNestingObjective(committedSheets,usedUnitIds,sheet){
+  const sheets=Array.isArray(committedSheets)?committedSheets.length:Infinity;
+  const margin=Math.max(0,readNumber("margin",10));
+  const sheetArea=Math.max(1,(sheet.w-2*margin)*(sheet.h-2*margin));
+  let usedArea=0;
+  (committedSheets||[]).forEach(svg=>{
+    const units=resultUnitIds(svg);
+    units.forEach(unitId=>{
+      const instanceId=state.unitToInstance[unitId];
+      const instance=(state.nestingManifest||[]).find(item=>item.id===instanceId);
+      if(instance)usedArea+=Number(instance.area||0);
+    });
+  });
+  const utilization=Math.max(0,Math.min(1,usedArea/(Math.max(1,sheets)*sheetArea)));
+  return {sheets,utilization,wasteRatio:1-utilization};
+}
+
+
 function estimateInstanceAreaForPool(instance){
   const units=instance?.kind==="custom"?partNestingUnits(instance.part):1;
   return instancePackingScore(instance)/Math.max(1,units);
@@ -2071,6 +2089,79 @@ async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,re
   return {remaining,committed:true,sheetIndex};
 }
 
+
+async function compactCommittedSheets(committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,perf){
+  if(!Array.isArray(committedSheets)||committedSheets.length<2)return {remaining,changed:false,removed:0};
+  let changed=false,removed=0;
+  const maxPasses=Math.min(4,Math.max(1,committedSheets.length-1));
+
+  for(let pass=0;pass<maxPasses&&committedSheets.length>1&&state.running;pass++){
+    const targetIndex=committedSheets.length-1;
+    const targetSheet=committedSheets[targetIndex];
+    const targetInstanceIds=resultInstanceIds(targetSheet);
+    if(!targetInstanceIds.size)break;
+
+    const targetInstances=(allInstances||[]).filter(item=>targetInstanceIds.has(item.instanceId));
+    if(!targetInstances.length)break;
+
+    // Сохраняем состояние: если весь последний лист не удаётся убрать,
+    // откатываем попытку целиком.
+    const snapshotSheets=committedSheets.map(svg=>svg.cloneNode(true));
+    const snapshotUsed=new Set(usedUnitIds);
+    const snapshotRemaining=(remaining||[]).slice();
+
+    // Убираем из глобального набора только полностью принадлежащие
+    // последнему листу экземпляры.
+    const targetUnitIds=resultUnitIds(targetSheet);
+    targetUnitIds.forEach(id=>usedUnitIds.delete(id));
+
+    const refillPool=uniqueInstances(targetInstances.concat(remaining||[]));
+    committedSheets.splice(targetIndex,1);
+
+    let refillResult={remaining:refillPool,changed:false};
+    try{
+      refillResult=await refillCommittedSheets(
+        committedSheets,
+        refillPool,
+        usedUnitIds,
+        allInstances,
+        orientations,
+        runId,
+        Math.max(2200,Number(perf.sheetCandidateMs)||3200),
+        perf,
+        {
+          candidateLimit:Math.min(18,Math.max(8,Number(perf.refillCandidates||8))),
+          maxPasses:Math.max(3,Number(perf.refillPasses||2)),
+          maxSheets:Math.max(1,committedSheets.length)
+        }
+      );
+    }catch(err){
+      console.warn("SheetNest global compact refill:",err);
+      refillResult={remaining:refillPool,changed:false};
+    }
+
+    const allTargetPlaced=targetInstances.every(item=>instanceIsFullyPlaced(item,usedUnitIds));
+    const noUnplacedPool=refillResult.remaining.every(item=>!targetInstanceIds.has(item.instanceId));
+    if(allTargetPlaced&&noUnplacedPool){
+      remaining=(remaining||[]).filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
+      changed=true;
+      removed++;
+      $( "runInfo" ).textContent="Оптимизация · удалён лист "+(targetIndex+1)+" · осталось листов: "+committedSheets.length;
+      await new Promise(resolve=>setTimeout(resolve,0));
+      continue;
+    }
+
+    // Не удалось убрать лист — полностью возвращаем его.
+    committedSheets.splice(0,committedSheets.length,...snapshotSheets);
+    usedUnitIds.clear();
+    snapshotUsed.forEach(id=>usedUnitIds.add(id));
+    remaining=snapshotRemaining;
+    break;
+  }
+
+  return {remaining,changed,removed};
+}
+
 async function runSearch(options={}){
   const benchmark=Boolean(options.benchmark);
   const benchmarkMode=options.benchmarkMode||"optimized";
@@ -2195,6 +2286,29 @@ async function runSearch(options={}){
         if(rescued)break;
       }
       if(!rescued||stallCount>=5)break;
+    }
+
+    // Глобальная двухкритериальная оптимизация:
+    // 1) минимум листов;
+    // 2) при том же числе листов — максимум полезного заполнения.
+    // Сначала пытаемся полностью убрать последний лист, перепаковывая его
+    // детали на уже существующие листы.
+    if(!benchmark&&committedSheets.length>1&&state.running){
+      const compacted=await compactCommittedSheets(
+        committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,perf
+      );
+      remaining=compacted.remaining;
+      if(compacted.changed){
+        state.bestResultSvgs=committedSheets;
+        state.bestResultMeta={
+          material:$( "material" ).value,
+          thickness:readNumber("thickness",3),
+          sheetW:sheet.w,
+          sheetH:sheet.h,
+          placed:usedUnitIds.size,total:totalUnits,
+          efficiency:totalUnits?usedUnitIds.size/totalUnits:0
+        };
+      }
     }
 
     const finalPlacedUnits=usedUnitIds.size;
@@ -2475,6 +2589,5 @@ setupDiagnosticsPanel();
 ["sheetW","sheetH","material","thickness"].forEach(id=>$(id).addEventListener("input",updateSheetPreview));
 setupShapeLibrary();setupCanvasZoom();updateSheetPreview();updateGeometryInfo();
 window.state=state
-
 
 
