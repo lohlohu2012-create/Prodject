@@ -1072,8 +1072,9 @@ function instancePackingScore(instance){
   }catch(_){return 1}
 }
 
-function selectNestingBatch(instances,size,mode="large"){
-  const list=(instances||[]).slice();
+function selectNestingBatch(instances,size,mode="large",skipIds=null){
+  const skip=skipIds||new Set();
+  const list=(instances||[]).filter(item=>item&&!skip.has(item.instanceId)).slice();
   list.sort((a,b)=>{
     const sa=instancePackingScore(a),sb=instancePackingScore(b);
     if(mode==="small")return sa-sb;
@@ -1243,11 +1244,26 @@ async function runSearch(){
   let remaining=allInstances.slice();
   let mode="large";
   let loopGuard=0;
+  let stallRounds=0;
+  const deferredIds=new Set();
 
   try{
-    while(remaining.length&&state.running&&loopGuard++<Math.max(20,allInstances.length*3)){
+    while(remaining.length&&state.running&&loopGuard++<Math.max(20,allInstances.length*4)){
+      if(deferredIds.size>=remaining.length){
+        // Все оставшиеся детали уже получали отдельную неудачную попытку.
+        // Делаем ещё один полный цикл другим порядком, но ничего не удаляем.
+        if(stallRounds>=2)break;
+        deferredIds.clear();
+        stallRounds++;
+        mode=mode==="large"?"small":"large";
+      }
+
       const beforeUsed=usedUnitIds.size;
-      const pool=selectNestingBatch(remaining,batchSize,mode);
+      let pool=selectNestingBatch(remaining,batchSize,mode,deferredIds);
+      if(!pool.length){
+        deferredIds.clear();
+        pool=selectNestingBatch(remaining,batchSize,mode);
+      }
       if(!pool.length)break;
 
       $("runInfo").textContent="Основной проход · "+remaining.length+" экземпляров осталось · режим "+(mode==="small"?"дозаполнение":"плотная укладка");
@@ -1261,10 +1277,12 @@ async function runSearch(){
 
       const progressUnits=usedUnitIds.size-beforeUsed;
       if(progressUnits>0){
+        stallRounds=0;
+        deferredIds.clear();
         mode=mode==="large"?"small":"large";
       }else{
         let rescued=false;
-        const rescueCandidates=pool.slice(0,Math.min(8,pool.length));
+        const rescueCandidates=selectNestingBatch(remaining,Math.min(10,pool.length),mode);
         for(const single of rescueCandidates){
           if(!state.running)break;
           const singleBefore=usedUnitIds.size;
@@ -1280,6 +1298,7 @@ async function runSearch(){
           remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
           if(usedUnitIds.size>singleBefore){
             rescued=true;
+            deferredIds.clear();
             break;
           }
         }
@@ -1287,14 +1306,14 @@ async function runSearch(){
         if(!rescued){
           const stalled=pool.find(item=>remaining.some(r=>r.instanceId===item.instanceId))||pool[0];
           if(stalled){
+            deferredIds.add(stalled.instanceId);
             const entry=state.instanceDiagnostics?.[stalled.instanceId];
             if(entry){
-              entry.status="lost";
-              entry.stage="NFP / PlacementWorker";
-              entry.issue="За полный проход не получено новое размещение. Экземпляр оставлен в списке неразмещённых.";
+              entry.status="candidate";
+              entry.stage="Повторная попытка";
+              entry.issue="В текущем порядке новое размещение не найдено; экземпляр отложен и будет проверен другим порядком.";
             }
           }
-          remaining=remaining.filter(item=>item.instanceId!==stalled?.instanceId);
         }
       }
 
