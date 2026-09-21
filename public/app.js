@@ -1621,6 +1621,7 @@ async function runBenchmark(){
     bestResultSvgs:state.bestResultSvgs,
     bestResultMeta:state.bestResultMeta,
     lastValidation:state.lastValidation,
+    runId:state.runId,
     instanceDiagnostics:state.instanceDiagnostics,
     unitToInstance:state.unitToInstance,
     searchFrames:state.searchFrames,
@@ -1646,6 +1647,7 @@ async function runBenchmark(){
   }finally{
     Object.assign(state,saved);
     state.running=false;
+    state.benchmarkActive=false;
     state.benchmarkActive=false;
     if(button)button.disabled=false;
     $("progressBar").style.width="0%";
