@@ -21,7 +21,13 @@ function benchmarkRuntimeConfig(orderSize,mode,budgetMs){
     fastPlacementScoring:!baseline,
     secondOrientationThreshold:0,
     refillPasses:base.refillPasses,
-    refillSheets:base.refillSheets
+    refillSheets:base.refillSheets,
+    poolMax:base.poolMax,
+    candidateVariants:base.candidateVariants,
+    sheetCandidateMs:base.sheetCandidateMs,
+    sheetPenalty:baseline?1:base.sheetPenalty,
+    fillWeight:baseline?0:base.fillWeight,
+    densePlacementScoring:!baseline
   };
 }
 
@@ -37,6 +43,12 @@ function adaptiveNestingConfig(orderSize){
       refillCandidates:8,
       refillPasses:2,
       refillSheets:999,
+      poolMax:48,
+      candidateVariants:3,
+      sheetCandidateMs:q.mode==="max"?5200:(q.mode==="fast"?1800:3200),
+      sheetPenalty:2,
+      fillWeight:1.2,
+      densePlacementScoring:true,
       secondOrientationThreshold:0
     };
   }
@@ -57,6 +69,12 @@ function adaptiveNestingConfig(orderSize){
     refillCandidates:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
     refillPasses:2,
     refillSheets:999,
+    poolMax:orderSize>120?56:48,
+    candidateVariants:q.mode==="max"?4:(q.mode==="fast"?1:3),
+    sheetCandidateMs:q.mode==="max"?6200:(q.mode==="fast"?2200:3600),
+    sheetPenalty:2.4,
+    fillWeight:1.5,
+    densePlacementScoring:true,
     secondOrientationThreshold:0.72
   };
 }
@@ -73,37 +91,100 @@ function updateSheetPreview(){
 }
 
 const SHAPE_LIBRARY=[
-  {id:"rect",name:"Прямоугольник",size:"200 × 100 мм",w:200,h:100,kind:"rect"},
-  {id:"square",name:"Квадрат",size:"120 × 120 мм",w:120,h:120,kind:"square"},
-  {id:"circle",name:"Круг",size:"Ø 100 мм",w:100,h:100,kind:"circle"},
-  {id:"triangle",name:"Треугольник",size:"140 × 120 мм",w:140,h:120,kind:"triangle"},
-  {id:"hex",name:"Шестиугольник",size:"120 × 104 мм",w:120,h:104,kind:"hex"},
-  {id:"roundrect",name:"Скруглённый прямоугольник",size:"220 × 100 мм",w:220,h:100,kind:"roundrect"}
+  {id:"rect",name:"Прямоугольник",kind:"rect",params:["w","h"],w:200,h:100,size:"200 × 100 мм"},
+  {id:"square",name:"Квадрат",kind:"square",params:["side"],side:120,w:120,h:120,size:"120 × 120 мм"},
+  {id:"circle",name:"Круг",kind:"circle",params:["diameter"],diameter:100,w:100,h:100,size:"Ø 100 мм"},
+  {id:"triangle",name:"Треугольник",kind:"triangle",params:["w","h"],w:140,h:120,size:"140 × 120 мм"},
+  {id:"hex",name:"Шестиугольник",kind:"hex",params:["w","h"],w:120,h:104,size:"120 × 104 мм"},
+  {id:"roundrect",name:"Скруглённый прямоугольник",kind:"roundrect",params:["w","h","radius"],w:220,h:100,radius:20,size:"220 × 100 мм · R20"}
 ];
 
+function clampShapeNumber(value,min=1,max=9999){
+  const n=Number(value);
+  return Number.isFinite(n)?Math.max(min,Math.min(max,n)):min;
+}
+function getShapeDefinition(shapeId){
+  return SHAPE_LIBRARY.find(item=>item.id===shapeId)||null;
+}
+function libraryPartShape(part){
+  const base=getShapeDefinition(part?.shapeId||part?.id);
+  if(!base)return null;
+  const shape={...base};
+  if(base.kind==="square"){
+    const side=clampShapeNumber(part?.side??base.side);
+    shape.side=side;shape.w=side;shape.h=side;
+  }else if(base.kind==="circle"){
+    const diameter=clampShapeNumber(part?.diameter??base.diameter);
+    shape.diameter=diameter;shape.w=diameter;shape.h=diameter;
+  }else{
+    shape.w=clampShapeNumber(part?.w??base.w);
+    shape.h=clampShapeNumber(part?.h??base.h);
+  }
+  if(base.kind==="roundrect"){
+    shape.radius=clampShapeNumber(part?.radius??base.radius,0,Math.min(shape.w,shape.h)/2);
+  }
+  shape.size=shapeSizeText(shape);
+  return shape;
+}
+function shapeSizeText(shape){
+  if(!shape)return"";
+  if(shape.kind==="circle")return"Ø "+Math.round(shape.diameter)+" мм";
+  if(shape.kind==="square")return Math.round(shape.side)+" × "+Math.round(shape.side)+" мм";
+  if(shape.kind==="roundrect")return Math.round(shape.w)+" × "+Math.round(shape.h)+" мм · R"+Math.round(shape.radius);
+  return Math.round(shape.w)+" × "+Math.round(shape.h)+" мм";
+}
+function shapeControlField(key,value,label,unit="мм"){
+  return "<label class='shape-param'><span>"+escapeHtml(label)+"</span><div class='input-suffix'><input type='number' data-shape-param='"+key+"' min='0.5' max='9999' step='0.5' value='"+Number(value)+"'><em>"+unit+"</em></div></label>";
+}
+function shapeControlsHtml(shape){
+  const fields=[];
+  if(shape.kind==="square")fields.push(shapeControlField("side",shape.side,"Сторона"));
+  else if(shape.kind==="circle")fields.push(shapeControlField("diameter",shape.diameter,"Диаметр"));
+  else{
+    fields.push(shapeControlField("w",shape.w,"Ширина"));
+    fields.push(shapeControlField("h",shape.h,"Высота"));
+    if(shape.kind==="roundrect")fields.push(shapeControlField("radius",shape.radius,"Радиус"));
+  }
+  return "<div class='shape-param-grid'>"+fields.join("")+"</div>";
+}
+
 function roundedRectPath(w,h,r){
+  const rr=Math.max(0,Math.min(r,Math.min(w,h)/2));
+  if(rr<=0)return "M0 0 L"+w+" 0 L"+w+" "+h+" L0 "+h+" Z";
   const points=[];
-  const corners=[[w-r,r,Math.PI*1.5,Math.PI*2],[w-r,h-r,0,Math.PI/2],[r,h-r,Math.PI/2,Math.PI],[r,r,Math.PI,Math.PI*1.5]];
+  const corners=[[w-rr,rr,Math.PI*1.5,Math.PI*2],[w-rr,h-rr,0,Math.PI/2],[rr,h-rr,Math.PI/2,Math.PI],[rr,rr,Math.PI,Math.PI*1.5]];
   corners.forEach(corner=>{
-    const cx=corner[0],cy=corner[1],a0=corner[2],a1=corner[3],steps=4;
-    for(let i=0;i<=steps;i++){const a=a0+(a1-a0)*i/steps;points.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)})}
+    const cx=corner[0],cy=corner[1],a0=corner[2],a1=corner[3],steps=5;
+    for(let i=0;i<=steps;i++){
+      const a=a0+(a1-a0)*i/steps;
+      points.push({x:cx+rr*Math.cos(a),y:cy+rr*Math.sin(a)});
+    }
   });
   return "M "+points.map(p=>p.x.toFixed(2)+" "+p.y.toFixed(2)).join(" L ")+" Z";
 }
 
-function shapePath(shape){
-  if(shape.kind==="rect")return "M0 0 L200 0 L200 100 L0 100 Z";
-  if(shape.kind==="square")return "M0 0 L120 0 L120 120 L0 120 Z";
-  if(shape.kind==="triangle")return "M0 120 L70 0 L140 120 Z";
-  if(shape.kind==="hex")return "M25 0 L95 0 L120 52 L95 104 L25 104 L0 52 Z";
-  if(shape.kind==="roundrect")return roundedRectPath(220,100,20);
-  const points=[];
-  for(let i=0;i<48;i++){const angle=-Math.PI/2+i*(Math.PI*2/48);points.push({x:50+50*Math.cos(angle),y:50+50*Math.sin(angle)})}
+function shapePath(shapeOrPart){
+  const shape=(shapeOrPart?.shapeId||shapeOrPart?.kind?libraryPartShape(shapeOrPart)||shapeOrPart:shapeOrPart)||{};
+  const w=Math.max(1,Number(shape.w)||100),h=Math.max(1,Number(shape.h)||100);
+  if(shape.kind==="rect")return "M0 0 L"+w+" 0 L"+w+" "+h+" L0 "+h+" Z";
+  if(shape.kind==="square")return "M0 0 L"+w+" 0 L"+w+" "+h+" L0 "+h+" Z";
+  if(shape.kind==="triangle")return "M0 "+h+" L"+(w/2)+" 0 L"+w+" "+h+" Z";
+  if(shape.kind==="hex"){
+    const inset=w*0.208333;
+    return "M"+inset+" 0 L"+(w-inset)+" 0 L"+w+" "+(h/2)+" L"+(w-inset)+" "+h+" L"+inset+" "+h+" L0 "+(h/2)+" Z";
+  }
+  if(shape.kind==="roundrect")return roundedRectPath(w,h,Number(shape.radius)||0);
+  const r=(Number(shape.diameter)||Math.min(w,h))/2,cx=w/2,cy=h/2,points=[];
+  for(let i=0;i<64;i++){
+    const angle=-Math.PI/2+i*(Math.PI*2/64);
+    points.push({x:cx+r*Math.cos(angle),y:cy+r*Math.sin(angle)});
+  }
   return "M "+points.map(p=>p.x.toFixed(2)+" "+p.y.toFixed(2)).join(" L ")+" Z";
 }
-
-function shapePreview(shape){
-  return "<svg viewBox=\"0 0 "+shape.w+" "+shape.h+"\" aria-hidden=\"true\"><path d=\""+shapePath(shape)+"\"/></svg>";
+function shapePreview(shapeOrPart){
+  const shape=(shapeOrPart?.shapeId||shapeOrPart?.kind?libraryPartShape(shapeOrPart)||shapeOrPart:shapeOrPart);
+  if(!shape)return"";
+  return "<svg viewBox='0 0 "+shape.w+" "+shape.h+"' aria-hidden='true'><path d='"+shapePath(shape)+"'/></svg>";
 }
 function normalizedQuantity(part){return Math.max(1,Math.min(9999,Math.floor(Number(part&&part.quantity)||1)))}
 function partNestingUnits(part){return Math.max(1,Math.floor(Number(part&&part.nestingUnits)||1))}
@@ -143,8 +224,8 @@ function createNestingManifest(){
   const manifest=[];
   state.customParts.forEach(part=>manifest.push({id:part.id,name:part.name,type:"cad",quantity:normalizedQuantity(part),units:partNestingUnits(part)}));
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
-    if(shape)manifest.push({id:part.id,name:shape.name,type:"library",quantity:normalizedQuantity(part),units:1});
+    const shape=libraryPartShape(part);
+    if(shape)manifest.push({id:part.id,name:shape.name,type:"library",quantity:normalizedQuantity(part),units:1,geometry:shape.size});
   });
   return manifest;
 }
@@ -181,11 +262,80 @@ function updateGeometryInfo(){
   if(!chip)return;
   const bits=[];
   if(state.customParts.length)bits.push(...state.customParts.map(part=>part.name+" × "+part.quantity+" · "+partNestingUnits(part)+" дет./экз."));
-  if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);return (shape?shape.name:part.id)+" × "+part.quantity;}));
+  if(state.libraryParts.length)bits.push(...state.libraryParts.map(part=>{const shape=libraryPartShape(part);return (shape?shape.name+" "+shape.size:part.id)+" × "+part.quantity;}));
   if(fileLine)fileLine.textContent=state.customParts.length?state.customParts.length+" CAD-файл(ов): "+state.customParts.map(part=>part.name).join(", "):"Файл не выбран";
   const partsTotal=$("partsTotal");if(partsTotal)partsTotal.textContent=requestedPartCount();
   if(!bits.length){chip.innerHTML="<span class=\"chip-dot\"></span><span>Геометрия не загружена</span>";return;}
   chip.innerHTML="<span class=\"chip-dot\"></span><span>"+escapeHtml(bits.join(" · "))+"</span>";
+}
+function applyShapeInputs(target,container){
+  if(!target||!container)return target;
+  container.querySelectorAll("[data-shape-param]").forEach(input=>{
+    const key=input.getAttribute("data-shape-param");
+    if(key)target[key]=clampShapeNumber(input.value);
+  });
+  if(target.kind==="square"){
+    target.side=clampShapeNumber(target.side);
+    target.w=target.side;target.h=target.side;
+  }else if(target.kind==="circle"){
+    target.diameter=clampShapeNumber(target.diameter);
+    target.w=target.diameter;target.h=target.diameter;
+  }else{
+    target.w=clampShapeNumber(target.w);target.h=clampShapeNumber(target.h);
+  }
+  if(target.kind==="roundrect")target.radius=clampShapeNumber(target.radius,0,Math.min(target.w,target.h)/2);
+  return target;
+}
+function updateShapePreviewInCard(card,draft){
+  const shape=libraryPartShape(draft)||draft;
+  const thumb=card.querySelector(".shape-thumb");
+  const size=card.querySelector(".shape-card-size");
+  if(thumb)thumb.innerHTML=shapePreview(shape);
+  if(size)size.textContent=shapeSizeText(shape);
+}
+function makeLibraryPart(shape,draft,quantity){
+  const geometry={shapeId:shape.id,kind:shape.kind,w:shape.w,h:shape.h,side:draft.side,diameter:draft.diameter,radius:draft.radius};
+  return {
+    id:"libpart-"+shape.id+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),
+    ...geometry,
+    quantity:Math.max(1,Math.min(9999,Math.floor(Number(quantity)||1))),
+    nestingUnits:1,contours:1,holes:0
+  };
+}
+function sameLibraryGeometry(a,b){
+  return a&&b&&(a.shapeId||a.id)===(b.shapeId||b.id)
+    && Math.abs(Number(a.w||0)-Number(b.w||0))<0.001
+    && Math.abs(Number(a.h||0)-Number(b.h||0))<0.001
+    && Math.abs(Number(a.side||0)-Number(b.side||0))<0.001
+    && Math.abs(Number(a.diameter||0)-Number(b.diameter||0))<0.001
+    && Math.abs(Number(a.radius||0)-Number(b.radius||0))<0.001;
+}
+function selectedLibraryPartHtml(part){
+  const shape=libraryPartShape(part);
+  if(!shape)return"";
+  return "<div class='selected-part-thumb'>"+shapePreview(shape)+"</div>"+
+    "<div class='selected-part-info'><b>"+escapeHtml(shape.name)+"</b><small>Типовая · "+escapeHtml(shape.size)+"</small></div>"+
+    "<div class='selected-part-controls'><div class='selected-part-settings'>"+shapeControlsHtml(shape)+"</div>"+
+    "<input class='selected-part-qty' type='number' min='1' max='9999' step='1' value='"+normalizedQuantity(part)+"' aria-label='Количество "+escapeHtml(shape.name)+"'>"+
+    "<button class='selected-part-remove' type='button' title='Удалить' aria-label='Удалить "+escapeHtml(shape.name)+"'>×</button></div>";
+}
+function bindLibraryPartCard(item,part){
+  item.querySelector(".selected-part-qty")?.addEventListener("change",event=>{
+    part.quantity=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));
+    event.target.value=String(part.quantity);
+    updateGeometryInfo();
+  });
+  item.querySelectorAll("[data-shape-param]").forEach(input=>{
+    input.addEventListener("change",()=>{
+      applyShapeInputs(part,item);
+      renderSelectedShapes();
+      updateGeometryInfo();
+    });
+  });
+  item.querySelector(".selected-part-remove")?.addEventListener("click",()=>{
+    state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);
+    renderSelectedShapes();updateGeometryInfo();
+  });
 }
 function renderSelectedShapes(){
   const wrap=$("selectedParts"),empty=$("selectedPartsEmpty");if(!wrap||!empty)return;
@@ -193,14 +343,12 @@ function renderSelectedShapes(){
   const hasParts=state.customParts.length||state.libraryParts.length;empty.style.display=hasParts?"none":"block";
   state.customParts.forEach(addCustomPartCard);
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
-    const item=document.createElement("div");item.className="selected-part";item.dataset.shapeId=part.id;
-    item.innerHTML="<div class=\"selected-part-thumb\">"+shapePreview(shape)+"</div><div class=\"selected-part-info\"><b>"+escapeHtml(shape.name)+"</b><small>Типовая · "+escapeHtml(shape.size)+"</small></div><input class=\"selected-part-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\""+part.quantity+"\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"selected-part-remove\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить "+escapeHtml(shape.name)+"\">×</button>";
-    item.querySelector(".selected-part-qty").addEventListener("change",event=>{
-      const value=Math.max(1,Math.min(9999,Math.floor(Number(event.target.value)||1)));event.target.value=String(value);
-      const target=state.libraryParts.find(entry=>entry.id===part.id);if(target)target.quantity=value;updateGeometryInfo();
-    });
-    item.querySelector(".selected-part-remove").addEventListener("click",()=>{state.libraryParts=state.libraryParts.filter(entry=>entry.id!==part.id);renderSelectedShapes();updateGeometryInfo()});
+    const shape=libraryPartShape(part);if(!shape)return;
+    const item=document.createElement("div");
+    item.className="selected-part selected-part-library";
+    item.dataset.partId=part.id;
+    item.innerHTML=selectedLibraryPartHtml(part);
+    bindLibraryPartCard(item,part);
     wrap.appendChild(item);
   });
 }
@@ -209,20 +357,35 @@ function setupShapeLibrary(){
   if(!library||library.dataset.ready==="1")return;
   library.dataset.ready="1";library.innerHTML="";
   SHAPE_LIBRARY.forEach(shape=>{
+    const draft={...shape};
     const card=document.createElement("article");
     card.className="shape-card";
-    card.innerHTML="<div class=\"shape-thumb\">"+shapePreview(shape)+"</div><div class=\"shape-card-copy\"><b>"+escapeHtml(shape.name)+"</b><small>"+escapeHtml(shape.size)+"</small></div><div class=\"shape-card-actions\"><input class=\"shape-card-qty\" type=\"number\" min=\"1\" max=\"9999\" step=\"1\" value=\"1\" aria-label=\"Количество "+escapeHtml(shape.name)+"\"><button class=\"shape-add\" type=\"button\" title=\"Добавить в раскрой\" aria-label=\"Добавить "+escapeHtml(shape.name)+"\">+</button></div>";
+    card.innerHTML="<div class='shape-thumb'>"+shapePreview(draft)+"</div>"+
+      "<div class='shape-card-copy'><b>"+escapeHtml(shape.name)+"</b><small class='shape-card-size'>"+escapeHtml(shape.size)+"</small></div>"+
+      "<div class='shape-card-params'>"+shapeControlsHtml(draft)+"</div>"+
+      "<div class='shape-card-actions'><input class='shape-card-qty' type='number' min='1' max='9999' step='1' value='1' aria-label='Количество "+escapeHtml(shape.name)+"'>"+
+      "<button class='shape-add' type='button' title='Добавить в раскрой' aria-label='Добавить "+escapeHtml(shape.name)+"'>+</button></div>";
+    card.querySelectorAll("[data-shape-param]").forEach(input=>{
+      input.addEventListener("input",()=>{
+        applyShapeInputs(draft,card);
+        updateShapePreviewInCard(card,draft);
+      });
+    });
     card.querySelector(".shape-add").addEventListener("click",()=>{
-      const input=card.querySelector(".shape-card-qty");
-      const quantity=Math.max(1,Math.min(9999,Math.floor(Number(input.value)||1)));
-      input.value="1";
-      const existing=state.libraryParts.find(entry=>entry.id===shape.id);
-      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);else state.libraryParts.push({id:shape.id,quantity,nestingUnits:1,contours:1,holes:0});
+      applyShapeInputs(draft,card);
+      const quantity=Math.max(1,Math.min(9999,Math.floor(Number(card.querySelector(".shape-card-qty").value)||1)));
+      const newPart=makeLibraryPart(shape,draft,quantity);
+      const existing=state.libraryParts.find(entry=>sameLibraryGeometry(entry,newPart));
+      if(existing)existing.quantity=Math.min(9999,existing.quantity+quantity);
+      else state.libraryParts.push(newPart);
+      card.querySelector(".shape-card-qty").value="1";
       renderSelectedShapes();updateGeometryInfo();status("Фигура добавлена");
     });
     library.appendChild(card);
   });
-  $("clearShapes")?.addEventListener("click",()=>{state.libraryParts=[];renderSelectedShapes();updateGeometryInfo()});
+  $("clearShapes")?.addEventListener("click",()=>{
+    state.libraryParts=[];renderSelectedShapes();updateGeometryInfo();
+  });
   renderSelectedShapes();
 }
 
@@ -245,12 +408,12 @@ function appendCustomParts(root,stage){
 
 function appendLibraryParts(root,stage){
   for(const part of state.libraryParts){
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);
+    const shape=libraryPartShape(part);
     if(!shape)continue;
     const d=shapePath(shape);
     const bounds={minX:0,minY:0,width:Math.max(1,shape.w),height:Math.max(1,shape.h)};
     for(let copy=0;copy<normalizedQuantity(part);copy++){
-      const instanceId="library-"+shape.id+"#"+(copy+1);
+      const instanceId="library-"+part.id+"#"+(copy+1);
       const ns="http://www.w3.org/2000/svg",group=document.createElementNS(ns,"g");
       group.setAttribute("data-sheetnest-stage-instance",instanceId);
       group.setAttribute("data-sheetnest-shape",shape.id);
@@ -473,10 +636,10 @@ function buildNestingInstances(){
     }
   });
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
+    const shape=libraryPartShape(part);if(!shape)return;
     const quantity=normalizedQuantity(part);
     for(let copy=1;copy<=quantity;copy++){
-      out.push({instanceId:"library-"+shape.id+"#"+copy,kind:"library",part,shape,copy});
+      out.push({instanceId:"library-"+part.id+"#"+copy,kind:"library",part,shape,copy});
     }
   });
   return out;
@@ -542,6 +705,9 @@ function resetEngine(runtimeConfig=null){
     exploreConcave:true,
     persistNfpCache:q.persistNfpCache!==false,
     fastPlacementScoring:q.fastPlacementScoring!==false,
+    densePlacementScoring:q.densePlacementScoring!==false,
+    sheetPenalty:Number.isFinite(Number(q.sheetPenalty))?Number(q.sheetPenalty):2,
+    fillWeight:Number.isFinite(Number(q.fillWeight))?Number(q.fillWeight):1.2,
   });
 }
 
@@ -826,9 +992,9 @@ function initializeInstanceDiagnostics(){
     }
   });
   state.libraryParts.forEach(part=>{
-    const shape=SHAPE_LIBRARY.find(item=>item.id===part.id);if(!shape)return;
+    const shape=libraryPartShape(part);if(!shape)return;
     for(let copy=0;copy<normalizedQuantity(part);copy++){
-      const instanceId="library-"+shape.id+"#"+(copy+1);
+      const instanceId="library-"+part.id+"#"+(copy+1);
       state.instanceDiagnostics[instanceId]={
         instanceId,sourceId:shape.id,name:shape.name,type:"Типовая",
         expectedUnits:1,unitIds:[],candidateUnitIds:[],bestCandidateUnitIds:[],finalUnitIds:[],
@@ -1256,13 +1422,13 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
       const sheetIndex=sheetRef.index;
       const currentSheet=committedSheets[sheetIndex];
       const incumbentUnitIds=resultUnitIds(currentSheet);
-      if(incumbentUnitIds.size===0||incumbentUnitIds.size>36)continue;
+      if(incumbentUnitIds.size===0||incumbentUnitIds.size>96)continue;
 
       const incumbentInstanceIds=resultInstanceIds(currentSheet);
       const incumbentInstances=(allInstances||[]).filter(item=>incumbentInstanceIds.has(item.instanceId));
       if(!incumbentInstances.length)continue;
 
-      const orderedRemaining=selectNestingBatch(remaining,candidateLimit,pass%2===0?"small":"large");
+      const orderedRemaining=selectNestingBatch(remaining,candidateLimit,"mixed");
       if(!orderedRemaining.length)break;
 
       const pool=uniqueInstances(incumbentInstances.concat(orderedRemaining));
@@ -1322,6 +1488,154 @@ async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allIn
   return {remaining,changed:changedAny};
 }
 
+function estimateInstanceAreaForPool(instance){
+  const units=instance?.kind==="custom"?partNestingUnits(instance.part):1;
+  return instancePackingScore(instance)/Math.max(1,units);
+}
+function estimateProgressivePoolSize(remaining,sheet,perf){
+  const margin=Math.max(0,readNumber("margin",10));
+  const innerArea=Math.max(1,(sheet.w-2*margin)*(sheet.h-2*margin));
+  let sampleArea=0;
+  const sample=(remaining||[]).slice(0,Math.min(remaining.length,120));
+  sample.forEach(item=>{sampleArea+=estimateInstanceAreaForPool(item)});
+  const avg=sample.length?sampleArea/sample.length:innerArea;
+  const expected=Math.max(1,Math.ceil((innerArea*1.65)/Math.max(1,avg)));
+  return Math.max(8,Math.min(Math.max(8,Number(perf.poolMax||48)),Math.ceil(expected*1.8)));
+}
+function interleaveNestingBatch(instances,size,reverse=false){
+  const list=(instances||[]).slice();
+  list.sort((a,b)=>{
+    const d=instancePackingScore(b)-instancePackingScore(a);
+    return d||(String(a.instanceId).localeCompare(String(b.instanceId)));
+  });
+  const out=[],seen=new Set();
+  let lo=list.length-1,hi=0;
+  while(out.length<Math.min(size,list.length)&&hi<=lo){
+    const source=reverse?(out.length%2===0?list.slice().sort((a,b)=>instancePackingScore(a)-instancePackingScore(b)):list):list;
+    if(reverse&&out.length%2===0){
+      for(let i=0;i<source.length&&out.length<size;i++){
+        const item=source[i];
+        if(!seen.has(item.instanceId)){seen.add(item.instanceId);out.push(item);break;}
+      }
+    }else{
+      const item=list[hi++];
+      if(item&&!seen.has(item.instanceId)){seen.add(item.instanceId);out.push(item);}
+    }
+    if(out.length<size&&hi<=lo){
+      const item=list[lo--];
+      if(item&&!seen.has(item.instanceId)){seen.add(item.instanceId);out.push(item);}
+    }
+  }
+  return out.slice(0,size);
+}
+function buildProgressiveCandidatePools(remaining,size,variants){
+  const list=uniqueInstances(remaining);
+  const pools=[],keys=new Set();
+  const push=(pool)=>{
+    const clean=uniqueInstances(pool).slice(0,size);
+    const key=clean.map(x=>x.instanceId).sort().join("|");
+    if(clean.length&&!keys.has(key)){keys.add(key);pools.push(clean);}
+  };
+  push(selectNestingBatch(list,size,"large"));
+  if(variants>=2)push(selectNestingBatch(list,size,"small"));
+  if(variants>=2)push(selectNestingBatch(list,size,"mixed"));
+  if(variants>=3)push(interleaveNestingBatch(list,size,false));
+  if(variants>=4){
+    const random=list.slice();
+    for(let i=random.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      const t=random[i];random[i]=random[j];random[j]=t;
+    }
+    push(random);
+  }
+  return pools;
+}
+function evaluateNestingSheet(svg,usedUnitIds,allInstances,sheet){
+  if(!svg)return null;
+  const unitIds=[...resultUnitIds(svg)];
+  const newUnitIds=unitIds.filter(id=>!usedUnitIds.has(id));
+  if(!newUnitIds.length)return null;
+  const byId=new Map((allInstances||[]).map(item=>[item.instanceId,item]));
+  let estimatedArea=0;
+  const touchedInstances=new Set();
+  newUnitIds.forEach(unitId=>{
+    const instanceId=state.unitToInstance[unitId];
+    const instance=byId.get(instanceId);
+    if(!instance)return;
+    const expected=instance?.kind==="custom"?partNestingUnits(instance.part):1;
+    estimatedArea+=estimateInstanceAreaForPool(instance);
+    touchedInstances.add(instanceId+"#"+expected);
+  });
+  const margin=Math.max(0,readNumber("margin",10));
+  const sheetArea=Math.max(1,(sheet.w-2*margin)*(sheet.h-2*margin));
+  const fill=Math.min(1,estimatedArea/sheetArea);
+  const newCount=newUnitIds.length;
+  const instanceBonus=Math.log1p(Math.max(0,touchedInstances.size))*0.5;
+  const score=fill*100+Math.log1p(newCount)*7+instanceBonus;
+  return {svg,newUnitIds,newCount,fill,estimatedArea,score};
+}
+function chooseBestNestingSheet(results,usedUnitIds,allInstances,sheet){
+  let best=null;
+  (results||[]).forEach(svg=>{
+    const candidate=evaluateNestingSheet(svg,usedUnitIds,allInstances,sheet);
+    if(!candidate)return;
+    if(!best||candidate.score>best.score||
+      (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount>best.newCount)||
+      (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount===best.newCount&&candidate.fill>best.fill)){
+      best=candidate;
+    }
+  });
+  return best;
+}
+async function searchBestNextSheet(remaining,allInstances,orientations,runId,perf,usedUnitIds){
+  const poolSize=Math.min(estimateProgressivePoolSize(remaining,orientations[0],perf),remaining.length);
+  const pools=buildProgressiveCandidatePools(remaining,poolSize,Math.max(1,Number(perf.candidateVariants||2)));
+  let best=null;
+  let attempted=0;
+  for(const pool of pools){
+    for(const orientation of orientations){
+      if(!state.running||runId!==state.runId)break;
+      attempted++;
+      const budget=Math.max(1200,Number(perf.sheetCandidateMs)||3000);
+      const runBest=await startOneRun(orientation,budget,runId,pool,perf);
+      if(!runBest?.results?.length)continue;
+      const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
+      if(!candidate)continue;
+      candidate.orientation=orientation;
+      candidate.poolSize=pool.length;
+      candidate.frame=runBest.frame;
+      if(!best||
+        candidate.score>best.score||
+        (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount>best.newCount)||
+        (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount===best.newCount&&candidate.fill>best.fill)){
+        best=candidate;
+      }
+      const targetFill=perf.mode==="max"?0.88:0.78;
+      if(best&&best.fill>=targetFill&&best.newCount>=Math.min(8,pool.length))break;
+    }
+    if(!state.running||runId!==state.runId)break;
+    if(best&&best.fill>=(perf.mode==="max"?0.9:0.82))break;
+  }
+  return {best,attempted,poolSize};
+}
+async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf){
+  if(!candidate)return {remaining,committed:false};
+  const sheetIndex=committedSheets.length;
+  const accepted=appendFreshResultSheets(committedSheets,[candidate.svg],usedUnitIds,candidate.orientation);
+  if(!accepted.length)return {remaining,committed:false};
+  remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
+
+  // После фиксации листа повторно оптимизируем только его, сохраняя все уже
+  // размещённые на нём детали. Это даёт шанс заполнять карманы мелкими деталями.
+  const refill=await refillCommittedSheets(
+    committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,
+    Math.max(1600,Number(perf.sheetCandidateMs)||3000),perf,
+    {focusIndexes:[sheetIndex],candidateLimit:Math.min(Math.max(8,Number(perf.refillCandidates||10)+4),24),maxPasses:2,maxSheets:1}
+  );
+  remaining=refill.remaining;
+  return {remaining,committed:true,sheetIndex};
+}
+
 async function runSearch(options={}){
   const benchmark=Boolean(options.benchmark);
   const benchmarkMode=options.benchmarkMode||"optimized";
@@ -1355,16 +1669,10 @@ async function runSearch(options={}){
   state.searchFrames=0;
   state.bestFrames=0;
 
-  const largeOrder=allInstances.length>28;
   const perf=benchmark?benchmarkRuntimeConfig(allInstances.length,benchmarkMode,benchmarkBudgetMs):adaptiveNestingConfig(allInstances.length);
-  const batchSize=largeOrder
-    ?(allInstances.length>120?14:(allInstances.length>70?16:18))
-    :allInstances.length;
-  const batchRunMs=largeOrder
-    ?perf.batchMs
-    :Math.max(5000,Math.min(q.seconds*1000/Math.max(1,orientations.length),perf.batchMs));
-  const estimatedBatches=Math.max(1,Math.ceil(allInstances.length/Math.max(1,batchSize)));
-  state.durationMs=Math.max(1,(estimatedBatches*orientations.length+6)*batchRunMs);
+  const poolSizeEstimate=estimateProgressivePoolSize(allInstances,orientations[0],perf);
+  const estimatedSheets=Math.max(1,Math.ceil(totalUnits/Math.max(4,Math.floor(poolSizeEstimate*.55))));
+  state.durationMs=Math.max(1,estimatedSheets*Math.max(1,Number(perf.candidateVariants||2))*orientations.length*Math.max(1200,Number(perf.sheetCandidateMs)||3000));
   state.startedAt=Date.now();
   $("progressBar").style.width="0%";
 
@@ -1372,166 +1680,61 @@ async function runSearch(options={}){
   const usedUnitIds=new Set();
   const benchmarkStartedAt=performance.now();
   let remaining=allInstances.slice();
-  // Сразу смешиваем крупные и мелкие детали, чтобы один пакет мог заполнить
-  // свободное место на листе, а не создавать отдельный «лист мелочёвки».
-  let mode="mixed";
-  let loopGuard=0;
-  let stallRounds=0;
-  const deferredIds=new Set();
+  let stallCount=0;
+  let sheetNo=0;
 
   try{
-    while(remaining.length&&state.running&&loopGuard++<Math.max(20,allInstances.length*4)){
-      // Не открываем новый лист, пока на уже открытых листах есть шанс
-      // разместить оставшиеся детали. Проверяем самые пустые листы первыми.
-      if(committedSheets.length&&remaining.length){
-        const beforePrefill=usedUnitIds.size;
-        const prefill=await refillCommittedSheets(
-          committedSheets,
-          remaining,
-          usedUnitIds,
-          allInstances,
-          orientations,
-          runId,
-          batchRunMs,
-          perf,
-          {
-            candidateLimit:Math.max(8,Math.min(perf.refillCandidates,batchSize)),
-            maxPasses:1,
-            maxSheets:6
-          }
+    while(remaining.length&&state.running&&sheetNo<Math.max(4,totalUnits)){
+      $("runInfo").textContent="Поиск листа "+(sheetNo+1)+" · осталось "+remaining.length+" экземпляров · варианты "+(perf.candidateVariants||1);
+
+      const search=await searchBestNextSheet(
+        remaining,allInstances,orientations,runId,perf,usedUnitIds
+      );
+
+      if(search.best){
+        const committed=await commitNextSheetCandidate(
+          search.best,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf
         );
-        remaining=prefill.remaining;
-        if(usedUnitIds.size>beforePrefill){
-          stallRounds=0;
-          deferredIds.clear();
-          $("runInfo").textContent="Дозаполнение существующих листов · осталось "+remaining.length+" экземпляров";
-          $("progressBar").style.width=Math.round(Math.min(.78,usedUnitIds.size/Math.max(1,totalUnits)*.78)*100)+"%";
+        remaining=committed.remaining;
+        if(committed.committed){
+          sheetNo++;
+          stallCount=0;
+          state.bestResultSvgs=committedSheets;
+          state.bestResultMeta={
+            material:$("material").value,
+            thickness:readNumber("thickness",3),
+            sheetW:committedSheets[committed.sheetIndex]?.getAttribute("data-sheet-w")||sheet.w,
+            sheetH:committedSheets[committed.sheetIndex]?.getAttribute("data-sheet-h")||sheet.h,
+            placed:usedUnitIds.size,total:totalUnits,
+            efficiency:totalUnits?usedUnitIds.size/totalUnits:0
+          };
+          const progress=Math.min(.92,usedUnitIds.size/Math.max(1,totalUnits)*.92);
+          $("progressBar").style.width=Math.round(progress*100)+"%";
+          $("runInfo").textContent="Лист "+sheetNo+" готов · "+search.best.newCount+" новых деталей · заполнение кандидата "+Math.round(search.best.fill*100)+"% · осталось "+remaining.length;
           await new Promise(resolve=>setTimeout(resolve,0));
           continue;
         }
       }
 
-      if(deferredIds.size>=remaining.length){
-        // Все оставшиеся детали уже получали отдельную неудачную попытку.
-        // Делаем ещё один полный цикл другим порядком, но ничего не удаляем.
-        if(stallRounds>=2)break;
-        deferredIds.clear();
-        stallRounds++;
-        mode=mode==="large"?"small":"large";
-      }
-
-      const beforeUsed=usedUnitIds.size;
-      let pool=selectNestingBatch(remaining,batchSize,mode,deferredIds);
-      if(!pool.length){
-        deferredIds.clear();
-        pool=selectNestingBatch(remaining,batchSize,mode);
-      }
-      if(!pool.length)break;
-
-      $("runInfo").textContent="Основной проход · "+remaining.length+" экземпляров осталось · режим "+(mode==="small"?"дозаполнение":"плотная укладка");
-      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,batchRunMs,perf);
-
-      const sheetsBeforeCandidate=committedSheets.length;
-      if(candidate?.results?.length){
-        appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
-
-        // Критический шаг для плотности: частичный кандидат не считается
-        // окончательным листом. Сразу пытаемся дозаполнить только что открытые
-        // листы оставшимися деталями, пока есть место.
-        const newSheetIndexes=[];
-        for(let si=sheetsBeforeCandidate;si<committedSheets.length;si++)newSheetIndexes.push(si);
-        if(newSheetIndexes.length&&state.running){
-          const localRefill=await refillCommittedSheets(
-            committedSheets,
-            remaining,
-            usedUnitIds,
-            allInstances,
-            orientations,
-            runId,
-            batchRunMs,
-            perf,
-            {
-              focusIndexes:newSheetIndexes,
-              candidateLimit:Math.max(perf.refillCandidates,batchSize),
-              maxPasses:Math.max(2,perf.refillPasses)
-            }
-          );
-          remaining=localRefill.remaining;
-        }
-      }
-
-      remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
-
-      const progressUnits=usedUnitIds.size-beforeUsed;
-      if(progressUnits>0){
-        stallRounds=0;
-        deferredIds.clear();
-        mode=mode==="large"?"small":"large";
-      }else{
-        let rescued=false;
-        const rescueCandidates=selectNestingBatch(remaining,Math.min(perf.rescueAttempts,pool.length),mode);
-        for(const single of rescueCandidates){
-          if(!state.running)break;
-          const singleBefore=usedUnitIds.size;
-          const singleBest=await runPoolAcrossOrientations(
-            [single],
-            orientations,
-            runId,
-            Math.max(2200,Math.min(batchRunMs,perf.mode==="max"?4500:3200)),
-            perf
-          );
-          if(singleBest?.results?.length){
-            appendFreshResultSheets(committedSheets,singleBest.results,usedUnitIds,singleBest.sheet);
-          }
-          remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
-          if(usedUnitIds.size>singleBefore){
-            rescued=true;
-            deferredIds.clear();
-            break;
+      // Последняя попытка — одиночные элементы, чтобы не считать деталь
+      // потерянной только из-за неудачного большого NFP-пакета.
+      stallCount++;
+      const rescue=selectNestingBatch(remaining,Math.min(6,remaining.length),stallCount%2?"small":"large");
+      let rescued=false;
+      for(const item of rescue){
+        if(!state.running)break;
+        for(const orientation of orientations){
+          const runBest=await startOneRun(orientation,Math.max(1400,Math.min(Number(perf.sheetCandidateMs)||3000,2200)),runId,[item],perf);
+          const candidate=chooseBestNestingSheet(runBest?.results,usedUnitIds,allInstances,orientation);
+          if(candidate){
+            const committed=await commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf);
+            remaining=committed.remaining;
+            if(committed.committed){sheetNo++;rescued=true;break;}
           }
         }
-
-        if(!rescued){
-          const stalled=pool.find(item=>remaining.some(r=>r.instanceId===item.instanceId))||pool[0];
-          if(stalled){
-            deferredIds.add(stalled.instanceId);
-            const entry=state.instanceDiagnostics?.[stalled.instanceId];
-            if(entry){
-              entry.status="candidate";
-              entry.stage="Повторная попытка";
-              entry.issue="В текущем порядке новое размещение не найдено; экземпляр отложен и будет проверен другим порядком.";
-            }
-          }
-        }
+        if(rescued)break;
       }
-
-      const progressBase=Math.min(.78,usedUnitIds.size/Math.max(1,totalUnits)*.78);
-      $("progressBar").style.width=Math.round(progressBase*100)+"%";
-      await new Promise(resolve=>setTimeout(resolve,0));
-    }
-
-    if(state.running&&remaining.length&&committedSheets.length){
-      const refill=await refillCommittedSheets(
-        committedSheets,
-        remaining,
-        usedUnitIds,
-        allInstances,
-        orientations,
-        runId,
-        batchRunMs,
-        perf
-      );
-      remaining=refill.remaining;
-    }
-
-    let extraPass=0;
-    while(state.running&&remaining.length&&extraPass++<1){
-      const before=usedUnitIds.size;
-      const pool=selectNestingBatch(remaining,Math.min(batchSize,18),"mixed");
-      const candidate=await runPoolAcrossOrientations(pool,orientations,runId,Math.max(2200,Math.min(batchRunMs,perf.mode==="max"?4500:3200)),perf);
-      if(candidate?.results?.length)appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
-      remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
-      if(usedUnitIds.size===before)break;
+      if(!rescued||stallCount>=3)break;
     }
 
     const finalPlacedUnits=usedUnitIds.size;

@@ -35,7 +35,10 @@
 			useHoles: false,
 			exploreConcave: false,
 			persistNfpCache: true,
-			fastPlacementScoring: true
+			fastPlacementScoring: true,
+			densePlacementScoring: true,
+			sheetPenalty: 2,
+			fillWeight: 1.2
 		};
 		
 		this.working = false;
@@ -153,6 +156,15 @@
 			}
 			if('fastPlacementScoring' in c){
 				config.fastPlacementScoring = !!c.fastPlacementScoring;
+			}
+			if('densePlacementScoring' in c){
+				config.densePlacementScoring = !!c.densePlacementScoring;
+			}
+			if('sheetPenalty' in c && Number.isFinite(parseFloat(c.sheetPenalty))){
+				config.sheetPenalty = Math.max(0, parseFloat(c.sheetPenalty));
+			}
+			if('fillWeight' in c && Number.isFinite(parseFloat(c.fillWeight))){
+				config.fillWeight = Math.max(0, parseFloat(c.fillWeight));
 			}
 			
 			SvgParser.config({ tolerance: config.curveTolerance});
