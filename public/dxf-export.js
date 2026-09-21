@@ -5,10 +5,18 @@ const VERSION="AC1015";
 function layerName(v,fallback){const s=String(v||fallback||"DETAIL").replace(/[^A-Za-z0-9_.-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,180);return s||fallback||"DETAIL"}
 function fmt(v){return (Number.isFinite(v)?v:0).toFixed(4)}
 function point(m,x,y){return{x:m.a*x+m.c*y+m.e,y:m.b*x+m.d*y+m.f}}
-function header(ext){return ["0","SECTION","2","HEADER","9","$ACADVER","1",VERSION,"9","$INSUNITS","70","4","9","$EXTMIN","10",fmt(ext.minX),"20",fmt(ext.minY),"9","$EXTMAX","10",fmt(ext.maxX),"20",fmt(ext.maxY),"0","ENDSEC","0","SECTION","2","ENTITIES"].join("\n")+"\n"}
+function header(ext,layers){
+  const layerList=[...layers].filter(Boolean);
+  const a=["0","SECTION","2","HEADER","9","$ACADVER","1",VERSION,"9","$INSUNITS","70","4","9","$EXTMIN","10",fmt(ext.minX),"20",fmt(ext.minY),"9","$EXTMAX","10",fmt(ext.maxX),"20",fmt(ext.maxY),"0","ENDSEC","0","SECTION","2","TABLES","0","TABLE","2","LTYPE","70","1","0","LTYPE","2","CONTINUOUS","70","0","3","Solid line","72","65","73","0","40","0.0","0","ENDTAB","0","TABLE","2","LAYER","70",String(layerList.length)];
+  for(const layer of layerList)a.push("0","LAYER","2",layer,"70","0","62",layer==="SHEET"?"3":"7","6","CONTINUOUS");
+  a.push("0","ENDTAB","0","ENDSEC","0","SECTION","2","ENTITIES");
+  return a.join("\n")+"\n";
+}
 function footer(){return "0\nENDSEC\n0\nEOF\n"}
-function lw(out,points,layer,closed){
+function lw(out,points,layer,closed,layers){
   if(!points||points.length<2)return;
+  const safeLayer=layerName(layer,"DETAIL");
+  layers?.add(safeLayer);
   const clean=[];
   for(const p of points){
     if(!p||!Number.isFinite(p.x)||!Number.isFinite(p.y))continue;
@@ -20,7 +28,7 @@ function lw(out,points,layer,closed){
   if((closed||endpointsCoincident)&&endpointsCoincident)clean.pop();
   if(clean.length<2)return;
   const isClosed=Boolean(closed||endpointsCoincident);
-  out.push("0","LWPOLYLINE","8",layerName(layer,"DETAIL"),"90",String(clean.length),"70",isClosed?"1":"0");
+  out.push("0","LWPOLYLINE","8",safeLayer,"90",String(clean.length),"70",isClosed?"1":"0");
   for(const p of clean)out.push("10",fmt(p.x),"20",fmt(p.y));
 }
 function geometry(el,matrix){
@@ -78,10 +86,15 @@ function toDxf(svg,index){
   const audit={minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity,sheetEntities:0,detailEntities:0,issues:[]};
   const includeBounds=points=>{for(const p of points){audit.minX=Math.min(audit.minX,p.x);audit.minY=Math.min(audit.minY,p.y);audit.maxX=Math.max(audit.maxX,p.x);audit.maxY=Math.max(audit.maxY,p.y)}};
   try{
+    const layers=new Set(["0","SHEET"]);
+    const sheetGeometries=[];
+    const detailRecords=[];
+    let sourceOrder=0;
     const sheetBins=[...clone.querySelectorAll("#sheet-bin,.bin")];
     sheetBins.forEach(bin=>{
       const matrix=bin.getCTM()||clone.getCTM();if(!matrix)return;
-      const g=geometry(bin,matrix);if(g.points.length){audit.sheetEntities++;includeBounds(g.points);lw(out,g.points,"SHEET",true)}
+      const g=geometry(bin,matrix);
+      if(g.points.length)sheetGeometries.push(g);
     });
     clone.querySelectorAll("g[data-sheetnest-unit-id]").forEach(group=>{
       const unit=group.getAttribute("data-sheetnest-unit-id")||"UNIT";
@@ -91,9 +104,38 @@ function toDxf(svg,index){
         if(el.closest("defs,clipPath,mask,pattern"))return;
         const matrix=el.getCTM()||clone.getCTM();if(!matrix)return;
         const g=geometry(el,matrix);
-        if(g.points.length){audit.detailEntities++;includeBounds(g.points);lw(out,g.points,layer,g.closed)}
+        if(!g.points.length)return;
+        detailRecords.push({group:group,groupKey:instance+"__"+unit,layer,points:g.points,closed:g.closed,sourceOrder:sourceOrder++});
       });
     });
+    const pointInPoly=(p,pts)=>{
+      let inside=false;
+      for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+        const xi=pts[i].x,yi=pts[i].y,xj=pts[j].x,yj=pts[j].y;
+        const hit=((yi>p.y)!==(yj>p.y))&&(p.x<(xj-xi)*(p.y-yi)/(yj-yi+Number.EPSILON)+xi);
+        if(hit)inside=!inside;
+      }
+      return inside;
+    };
+    for(const rec of detailRecords){
+      rec.depth=0;
+      if(!rec.closed||rec.points.length<3)continue;
+      const probe=rec.points[0];
+      for(const other of detailRecords){
+        if(other===rec||!other.closed||other.points.length<3||other.groupKey!==rec.groupKey)continue;
+        if(pointInPoly(probe,other.points))rec.depth++;
+      }
+    }
+    detailRecords.sort((a,b)=>{
+      if(a.depth!==b.depth)return b.depth-a.depth;
+      return a.sourceOrder-b.sourceOrder;
+    });
+    for(const rec of detailRecords){
+      audit.detailEntities++;includeBounds(rec.points);lw(out,rec.points,rec.layer,rec.closed,layers);
+    }
+    for(const g of sheetGeometries){
+      audit.sheetEntities++;includeBounds(g.points);lw(out,g.points,"SHEET",true,layers);
+    }
     if(sheetBins.length!==1)audit.issues.push("Ожидался ровно один контур листа, найдено "+sheetBins.length+".");
     if(sheetW>0&&sheetH>0&&audit.sheetEntities===1){
       const sw=audit.maxX-audit.minX,sh=audit.maxY-audit.minY;
@@ -104,7 +146,7 @@ function toDxf(svg,index){
     if(audit.detailEntities===0)audit.issues.push("В результате нет ни одного контура детали.");
     if(!Number.isFinite(audit.minX))audit.issues.push("Экспорт не содержит геометрических сущностей.");
     if(audit.issues.length)throw new Error("Проверка DXF не пройдена: "+audit.issues.join(" "));
-    out.unshift(header({minX:audit.minX,minY:audit.minY,maxX:audit.maxX,maxY:audit.maxY}));
+    out.unshift(header({minX:audit.minX,minY:audit.minY,maxX:audit.maxX,maxY:audit.maxY},layers));
     return out.join("\n");
   }finally{host.remove()}
 }
