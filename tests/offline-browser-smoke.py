@@ -158,7 +158,7 @@ with tempfile.TemporaryDirectory(prefix="sheetnest-no-remnants-", ignore_cleanup
                 shot = cdp("Page.captureScreenshot", {
                     "format": "png",
                     "fromSurface": True,
-                    "clip": sample["clip"]
+                    "clip": {**sample["clip"], "scale": 1}
                 }).get("data")
                 dark_pct = None
                 mean_lum = None
