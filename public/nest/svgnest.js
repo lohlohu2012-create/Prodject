@@ -49,6 +49,7 @@
 		var progress = 0;
 		var displayCounter = 0;
 		var lastDisplayTime = 0;
+		var engineSession = 0;
 		
 		this.parsesvg = function(svgstring){
 			// reset if in progress
@@ -179,7 +180,8 @@
 		
 		// progressCallback is called when progress is made
 		// displayCallback is called when a new placement has been made
-		this.start = function(progressCallback, displayCallback){						
+		this.start = function(progressCallback, displayCallback, errorCallback){
+			var sessionId = ++engineSession;						
 			if(!svg || !bin){
 				return false;
 			}
@@ -282,16 +284,22 @@
 			this.working = false;
 			
 			workerTimer = setInterval(function(){
+				if(sessionId !== engineSession)return;
 				if(!self.working){
-					self.launchWorkers.call(self, tree, binPolygon, config, progressCallback, displayCallback);
 					self.working = true;
+					self.launchWorkers.call(self, tree, binPolygon, config, progressCallback, displayCallback, errorCallback, sessionId);
 				}
 				
 				progressCallback(progress);
 			}, 100);
 		}
 		
-		this.launchWorkers = function(tree, binPolygon, config, progressCallback, displayCallback){
+		this.launchWorkers = function(tree, binPolygon, config, progressCallback, displayCallback, errorCallback, sessionId){
+			// Baseline benchmark mode intentionally disables persistent NFP caching.
+			// Clear the cache at the beginning of each GA generation in that mode.
+			if(config.persistNfpCache === false){
+				nfpCache = {};
+			}
 			function shuffle(array) {
 			  var currentIndex = array.length, temporaryValue, randomIndex ;
 
@@ -593,7 +601,9 @@
 				p2.require('placementworker.js');				
 				
 				p2.map(worker.placePaths).then(function(placements){
+					if(sessionId !== engineSession)return;
 					if(!placements || placements.length == 0){
+						self.working = false;
 						return;
 					}
 					
@@ -627,16 +637,21 @@
 
 					var now = Date.now();
 					var shouldDisplay = isBest || (now - lastDisplayTime >= 220);
+					if(sessionId !== engineSession)return;
 					if(shouldDisplay && typeof displayCallback === 'function'){
 						lastDisplayTime = now;
 						displayCallback(self.applyPlacement(bestresult.placements), placedArea/totalArea, numPlacedParts, numParts, isBest, ++displayCounter);
 					}
 					self.working = false;
 				}, function (err) {
-					console.log(err);
+					if(sessionId !== engineSession)return;
+					self.working = false;
+					if(typeof errorCallback === 'function')errorCallback(err);
 				});
 			}, function (err) {
-				console.log(err);
+				if(sessionId !== engineSession)return;
+				self.working = false;
+				if(typeof errorCallback === 'function')errorCallback(err);
 			});
 		}
 		
@@ -890,9 +905,11 @@
 		}
 		
 		this.stop = function(){
+			engineSession++;
 			this.working = false;
 			if(workerTimer){
 				clearInterval(workerTimer);
+				workerTimer = null;
 			}
 		};
 	}

@@ -1,4 +1,4 @@
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -27,55 +27,62 @@ function benchmarkRuntimeConfig(orderSize,mode,budgetMs){
     sheetCandidateMs:base.sheetCandidateMs,
     sheetPenalty:baseline?1:base.sheetPenalty,
     fillWeight:baseline?0:base.fillWeight,
-    densePlacementScoring:!baseline
+    densePlacementScoring:!baseline,
+    local:base.local
   };
 }
 
+function isLocalFileMode(){
+  try{return typeof location!=="undefined"&&location.protocol==="file:"}catch(_){return false}
+}
 function adaptiveNestingConfig(orderSize){
   const q=qualityConfig();
   const large=orderSize>28;
+  const local=isLocalFileMode();
   if(!large){
     return{
       ...q,
       rotations:Math.max(1,Math.floor(readNumber("rotations",2))),
-      batchMs:Math.max(4500,Math.min(q.seconds*1000,q.mode==="max"?14000:8500)),
-      rescueAttempts:4,
+      batchMs:Math.max(5000,Math.min(q.seconds*1000,q.mode==="max"?16000:9000)),
+      rescueAttempts:6,
       refillCandidates:8,
       refillPasses:2,
       refillSheets:999,
-      poolMax:48,
-      candidateVariants:3,
-      sheetCandidateMs:q.mode==="max"?5200:(q.mode==="fast"?1800:3200),
+      poolMax:local?16:24,
+      candidateVariants:q.mode==="max"?4:3,
+      sheetCandidateMs:local?(q.mode==="max"?9000:(q.mode==="fast"?4500:7000)):(q.mode==="max"?7000:(q.mode==="fast"?2800:5200)),
       sheetPenalty:2,
       fillWeight:1.2,
       densePlacementScoring:true,
-      secondOrientationThreshold:0
+      secondOrientationThreshold:0,
+      local
     };
   }
-  const rotations=Math.max(1,Math.min(2,Math.floor(readNumber("rotations",2))));
-  const populationCap=orderSize>120?(q.mode==="max"?16:(q.mode==="fast"?8:10)):(q.mode==="max"?20:(q.mode==="fast"?9:13));
+  const rotations= q.mode==="max"
+    ?Math.max(1,Math.min(4,Math.floor(readNumber("rotations",2))))
+    :Math.max(1,Math.min(2,Math.floor(readNumber("rotations",2))));
+  const populationCap=orderSize>120?(q.mode==="max"?18:(q.mode==="fast"?10:12)):(q.mode==="max"?24:(q.mode==="fast"?10:16));
   const populationSize=Math.min(q.populationSize,populationCap);
-  const mutationRate=Math.min(q.mutationRate,q.mode==="max"?15:(q.mode==="fast"?10:12));
-  const batchMs=q.mode==="max"?6500:(q.mode==="fast"?2800:4200);
+  const mutationRate=Math.min(q.mutationRate,q.mode==="max"?16:(q.mode==="fast"?10:13));
+  const batchMs=q.mode==="max"?8000:(q.mode==="fast"?4000:6000);
   return{
     ...q,
     rotations,
     populationSize,
     mutationRate,
     batchMs,
-    rescueAttempts:orderSize>120?2:3,
-    // Пустое место на уже открытых листах важнее скорости открытия нового листа.
-    // После частичного кандидата даём алгоритму несколько попыток дозаполнить лист.
+    rescueAttempts:orderSize>120?4:6,
     refillCandidates:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
-    refillPasses:2,
+    refillPasses:3,
     refillSheets:999,
-    poolMax:orderSize>120?56:48,
-    candidateVariants:q.mode==="max"?4:(q.mode==="fast"?1:3),
-    sheetCandidateMs:q.mode==="max"?6200:(q.mode==="fast"?2200:3600),
-    sheetPenalty:2.4,
-    fillWeight:1.5,
+    poolMax:local?(q.mode==="max"?16:14):(q.mode==="max"?24:20),
+    candidateVariants:q.mode==="max"?(local?3:4):(local?2:3),
+    sheetCandidateMs:local?(q.mode==="max"?10000:(q.mode==="fast"?5000:7500)):(q.mode==="max"?8500:(q.mode==="fast"?3500:6500)),
+    sheetPenalty:q.mode==="max"?2.8:2.4,
+    fillWeight:q.mode==="max"?1.7:1.5,
     densePlacementScoring:true,
-    secondOrientationThreshold:0.72
+    secondOrientationThreshold:0.72,
+    local
   };
 }
 function getSheet(){const w=readNumber("sheetW",1500),h=readNumber("sheetH",3000);if(w<=0||h<=0)throw new Error("Размер листа должен быть больше нуля.");return{w,h,auto:$("orientation").value==="auto"}}
@@ -1163,6 +1170,7 @@ function updateProgress(){
 function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=null){
   const activeInstances=Array.isArray(workInstances)&&workInstances.length?workInstances:buildNestingInstances();
   const perf=runtimeConfig||adaptiveNestingConfig(activeInstances.length);
+  const attemptId=++state.engineAttemptId;
   resetEngine(perf);
   const expectedTotal=nestingUnitCount(activeInstances);
   const scopeIds=activeInstances.map(item=>item.instanceId);
@@ -1170,37 +1178,51 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
   markDiagnosticsStaged(nestingSvg,scopeIds);
   const parsed=SvgNest.parsesvg(nestingSvg);
   registerParsedUnits(parsed,scopeIds);
+  const parsedUnits=parsed.querySelectorAll("[data-sheetnest-unit-id]").length;
+  if(expectedTotal>0&&parsedUnits===0){
+    const error=new Error("SvgNest не распознал ни одной детали в подготовленном SVG.");
+    return Promise.resolve({results:[],placed:0,total:expectedTotal,error});
+  }
   const bin=parsed.querySelector("#sheet-bin");
   if(!bin)throw new Error("Не удалось создать металлический лист.");
   SvgNest.setbin(bin);
-  let runBest=null;
+  let runBest=null,attemptError=null;
   return new Promise(resolve=>{
     let settled=false,timer=null,interval=null;
-    const settle=()=>{
+    const settle=(reason)=>{
       if(settled)return;
       settled=true;
       if(timer)clearTimeout(timer);
       if(interval)clearInterval(interval);
       try{SvgNest.stop()}catch(_){}
-      // Тайм-аут завершает только текущую попытку. Большой заказ продолжает
-      // обрабатывать следующие пакеты и может открыть новые листы.
-      resolve(runBest);
+      resolve(runBest?{...runBest,error:attemptError,reason}:{results:[],placed:0,total:expectedTotal,error:attemptError,reason});
     };
     const updateTimer=()=>{
-      if(!state.running||runId!==state.runId){settle();return;}
+      if(!state.running||runId!==state.runId||attemptId!==state.engineAttemptId){settle("stale");return;}
       updateProgress();
     };
-    timer=setTimeout(settle,Math.max(1000,Number(runDurationMs)||1000));
+    timer=setTimeout(()=>{
+      activeInstances.forEach(instance=>{
+        const entry=state.instanceDiagnostics?.[instance.instanceId];
+        if(entry&&!entry.finalUnitIds.length){
+          entry.status="candidate";
+          entry.stage="NFP / timeout";
+          entry.issue="Попытка остановлена по времени до получения нового валидного кандидата.";
+        }
+      });
+      if(!perf.benchmark)renderDiagnosticsPanel();
+      settle("timeout");
+    },Math.max(1800,Number(runDurationMs)||1800));
     interval=setInterval(updateTimer,120);
     try{
-      SvgNest.start(
+      const started=SvgNest.start(
         progress=>{
-          if(state.running&&runId===state.runId){
+          if(state.running&&runId===state.runId&&attemptId===state.engineAttemptId){
             $("progressBar").style.width=Math.max(2,Math.round((progress||0)*100))+"%";
           }
         },
         (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
-          if(!state.running||runId!==state.runId)return;
+          if(!state.running||runId!==state.runId||attemptId!==state.engineAttemptId)return;
           if(!svglist||!svglist.length)return;
           state.searchFrames++;
           const validation=validateNestingResult(svglist,placed,expectedTotal);
@@ -1216,14 +1238,9 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
             updateDiagnosticsFromCandidate(svglist,isBest,frame,validation,false);
           }
           const taggedResults=(svglist||[]).map(svg=>{
-            try{
-              svg.setAttribute("data-sheet-w",String(sheet.w));
-              svg.setAttribute("data-sheet-h",String(sheet.h));
-            }catch(_){}
+            try{svg.setAttribute("data-sheet-w",String(sheet.w));svg.setAttribute("data-sheet-h",String(sheet.h))}catch(_){}
             return svg;
           });
-          // Принимаем любой структурно валидный кандидат, если он лучше
-          // уже сохранённого. Не зависим только от флага isBest.
           const candidate={
             results:taggedResults,
             efficiency:Number(efficiency||0),
@@ -1234,7 +1251,6 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
             validation
           };
           if(validation.valid&&(!runBest||betterNestingCandidate(candidate,runBest)))runBest=candidate;
-
           state.resultSvgs=svglist;
           if(renderSearch){
             state.lastSearchRenderAt=now;
@@ -1243,11 +1259,24 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
           const tag=!validation.valid?"Непроверенный кандидат":(isBest?"Новый лучший":"Кандидат");
           $("runInfo").textContent=tag+" · кадр "+state.searchFrames+" · "+shownPlaced+"/"+expectedTotal+" деталей · "+Math.round((efficiency||0)*100)+"% заполнение";
           $("status").textContent=validation.valid?"Ищем раскладку…":"Проверяем геометрию результата…";
+        },
+        err=>{
+          attemptError=err instanceof Error?err:new Error(String(err||"Ошибка NFP worker"));
+          activeInstances.forEach(instance=>{
+            const entry=state.instanceDiagnostics?.[instance.instanceId];
+            if(!entry)return;
+            entry.status=entry.status==="placed"?"placed":"candidate";
+            entry.stage="NFP / worker";
+            entry.issue="Ошибка расчёта: "+attemptError.message;
+          });
+          if(!perf.benchmark)renderDiagnosticsPanel();
+          settle("engine-error");
         }
       );
+      if(started===false)settle("engine-refused");
     }catch(err){
-      settle();
-      throw err;
+      attemptError=err;
+      settle("engine-throw");
     }
   });
 }
@@ -1493,14 +1522,13 @@ function estimateInstanceAreaForPool(instance){
   return instancePackingScore(instance)/Math.max(1,units);
 }
 function estimateProgressivePoolSize(remaining,sheet,perf){
-  const margin=Math.max(0,readNumber("margin",10));
-  const innerArea=Math.max(1,(sheet.w-2*margin)*(sheet.h-2*margin));
-  let sampleArea=0;
-  const sample=(remaining||[]).slice(0,Math.min(remaining.length,120));
-  sample.forEach(item=>{sampleArea+=estimateInstanceAreaForPool(item)});
-  const avg=sample.length?sampleArea/sample.length:innerArea;
-  const expected=Math.max(1,Math.ceil((innerArea*1.65)/Math.max(1,avg)));
-  return Math.max(8,Math.min(Math.max(8,Number(perf.poolMax||48)),Math.ceil(expected*1.8)));
+  const count=Array.isArray(remaining)?remaining.length:0;
+  const cap=Math.max(6,Math.min(Number(perf.poolMax||18),count||6));
+  // NFP complexity grows approximately quadratically with the number of parts.
+  // Never build a huge first pool just because the sheet has lots of free area.
+  if(count<=cap)return count;
+  const base=perf.local?12:16;
+  return Math.max(6,Math.min(cap,base));
 }
 function interleaveNestingBatch(instances,size,reverse=false){
   const list=(instances||[]).slice();
@@ -1571,7 +1599,9 @@ function evaluateNestingSheet(svg,usedUnitIds,allInstances,sheet){
   const fill=Math.min(1,estimatedArea/sheetArea);
   const newCount=newUnitIds.length;
   const instanceBonus=Math.log1p(Math.max(0,touchedInstances.size))*0.5;
-  const score=fill*100+Math.log1p(newCount)*7+instanceBonus;
+  // Фактическое число новых units должно доминировать над оценкой площади.
+  // Иначе большой элемент мог «выиграть» у множества мелких деталей.
+  const score=newCount*10000+fill*100+instanceBonus;
   return {svg,newUnitIds,newCount,fill,estimatedArea,score};
 }
 function chooseBestNestingSheet(results,usedUnitIds,allInstances,sheet){
@@ -1587,36 +1617,95 @@ function chooseBestNestingSheet(results,usedUnitIds,allInstances,sheet){
   });
   return best;
 }
+function rotatedBoundsForAngle(width,height,degrees){
+  const a=Math.abs(Number(degrees||0))*Math.PI/180;
+  const c=Math.abs(Math.cos(a)),sn=Math.abs(Math.sin(a));
+  return {width:width*c+height*sn,height:width*sn+height*c};
+}
+function instanceSheetFit(instance,orientation){
+  try{
+    const margin=Math.max(0,readNumber("margin",10));
+    const usableW=Math.max(0,orientation.w-2*margin);
+    const usableH=Math.max(0,orientation.h-2*margin);
+    let bounds;
+    if(instance.kind==="custom")bounds=estimateSvgBounds(instance.part.svgText);
+    else bounds={width:instance.shape?.w||0,height:instance.shape?.h||0};
+    const rotationCount=Math.max(1,Math.floor(readNumber("rotations",2)));
+    const angles=[];
+    if(rotationCount<=1)angles.push(0);
+    else{
+      for(let i=0;i<rotationCount;i++)angles.push(i*(360/rotationCount));
+    }
+    const fits=angles.some(angle=>{
+      const b=rotatedBoundsForAngle(bounds.width,bounds.height,angle);
+      return b.width+readNumber("gap",2)<=usableW+1e-6 && b.height+readNumber("gap",2)<=usableH+1e-6;
+    });
+    return {fits,usableW,usableH,width:bounds.width,height:bounds.height};
+  }catch(_){return {fits:true,usableW:0,usableH:0,width:0,height:0}}
+}
+function preflightNestingInstances(instances,orientations){
+  const fit=[],blocked=[];
+  (instances||[]).forEach(instance=>{
+    const checked=(orientations||[]).map(orientation=>({orientation,...instanceSheetFit(instance,orientation)}));
+    if(checked.some(item=>item.fits)){
+      fit.push(instance);
+      return;
+    }
+    blocked.push({instance,checked});
+    const entry=state.instanceDiagnostics?.[instance.instanceId];
+    if(entry){
+      const sizes=checked.map(item=>Math.round(item.width)+"×"+Math.round(item.height)).join(" / ");
+      const sheets=checked.map(item=>Math.round(item.usableW)+"×"+Math.round(item.usableH)).join(" / ");
+      entry.status="lost";
+      entry.stage="Предварительная проверка";
+      entry.issue="Габариты детали "+sizes+" мм превышают доступное поле листа "+sheets+" мм с учётом поля/зазора.";
+    }
+  });
+  return {fit,blocked};
+}
 async function searchBestNextSheet(remaining,allInstances,orientations,runId,perf,usedUnitIds){
-  const poolSize=Math.min(estimateProgressivePoolSize(remaining,orientations[0],perf),remaining.length);
-  const pools=buildProgressiveCandidatePools(remaining,poolSize,Math.max(1,Number(perf.candidateVariants||2)));
+  const initialSize=Math.min(estimateProgressivePoolSize(remaining,orientations[0],perf),remaining.length);
+  const sizes=[initialSize,Math.min(16,remaining.length),Math.min(12,remaining.length),Math.min(8,remaining.length),Math.min(4,remaining.length),Math.min(1,remaining.length)]
+    .filter((n,i,a)=>n>0&&a.indexOf(n)===i);
   let best=null;
   let attempted=0;
-  for(const pool of pools){
-    for(const orientation of orientations){
-      if(!state.running||runId!==state.runId)break;
-      attempted++;
-      const budget=Math.max(1200,Number(perf.sheetCandidateMs)||3000);
-      const runBest=await startOneRun(orientation,budget,runId,pool,perf);
-      if(!runBest?.results?.length)continue;
-      const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
-      if(!candidate)continue;
-      candidate.orientation=orientation;
-      candidate.poolSize=pool.length;
-      candidate.frame=runBest.frame;
-      if(!best||
-        candidate.score>best.score||
-        (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount>best.newCount)||
-        (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount===best.newCount&&candidate.fill>best.fill)){
-        best=candidate;
+  const maxAttempts=perf.local?12:12;
+
+  for(const size of sizes){
+    const remainingAttempts=maxAttempts-attempted;
+    if(remainingAttempts<=0)break;
+    const variants=Math.max(1,Math.min(Number(perf.candidateVariants||2),remainingAttempts));
+    const pools=buildProgressiveCandidatePools(remaining,size,variants);
+    for(const pool of pools){
+      for(const orientation of orientations){
+        if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
+        attempted++;
+        const budget=Math.max(1800,Number(perf.sheetCandidateMs)||6000);
+        const runBest=await startOneRun(orientation,budget,runId,pool,perf);
+        if(!runBest?.results?.length)continue;
+        const candidate=chooseBestNestingSheet(runBest.results,usedUnitIds,allInstances,orientation);
+        if(!candidate)continue;
+        candidate.orientation=orientation;
+        candidate.poolSize=pool.length;
+        candidate.frame=runBest.frame;
+        candidate.attemptError=runBest.error||null;
+        if(!best||
+          candidate.score>best.score||
+          (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount>best.newCount)||
+          (Math.abs(candidate.score-best.score)<0.0001&&candidate.newCount===best.newCount&&candidate.fill>best.fill)){
+          best=candidate;
+        }
+        // Stop only when the candidate actually placed the entire pool.
+        if(best.newCount>=pool.length)break;
       }
-      const targetFill=perf.mode==="max"?0.88:0.78;
-      if(best&&best.fill>=targetFill&&best.newCount>=Math.min(8,pool.length))break;
+      if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
+      if(best&&best.newCount>=pool.length)break;
     }
-    if(!state.running||runId!==state.runId)break;
-    if(best&&best.fill>=(perf.mode==="max"?0.9:0.82))break;
+    if(!state.running||runId!==state.runId||attempted>=maxAttempts)break;
+    if(best&&best.newCount>=Math.max(1,Math.ceil(size*0.9)))break;
   }
-  return {best,attempted,poolSize};
+
+  return {best,attempted,initialPoolSize:initialSize};
 }
 async function commitNextSheetCandidate(candidate,committedSheets,usedUnitIds,remaining,allInstances,orientations,runId,perf){
   if(!candidate)return {remaining,committed:false};
@@ -1655,6 +1744,13 @@ async function runSearch(options={}){
   state.expectedPartCount=totalUnits;
   state.lastValidation=null;
   initializeInstanceDiagnostics();
+  const preflight=preflightNestingInstances(allInstances,orientations);
+  const blockedInstances=preflight.blocked;
+  renderDiagnosticsPanel();
+  if(!preflight.fit.length){
+    const blockedNames=blockedInstances.slice(0,6).map(item=>item.instance.instanceId).join(", ");
+    throw new Error("Ни одна деталь не помещается на лист. Проверьте размеры листа/поле/зазор. Проблемные instanceId: "+blockedNames);
+  }
 
   $("nestButton").disabled=true;
   $("stopButton").disabled=false;
@@ -1679,7 +1775,7 @@ async function runSearch(options={}){
   const committedSheets=[];
   const usedUnitIds=new Set();
   const benchmarkStartedAt=performance.now();
-  let remaining=allInstances.slice();
+  let remaining=preflight.fit.slice();
   let stallCount=0;
   let sheetNo=0;
 
@@ -1734,7 +1830,7 @@ async function runSearch(options={}){
         }
         if(rescued)break;
       }
-      if(!rescued||stallCount>=3)break;
+      if(!rescued||stallCount>=5)break;
     }
 
     const finalPlacedUnits=usedUnitIds.size;
@@ -1794,11 +1890,13 @@ async function runSearch(options={}){
       status("Раскрой рассчитан");
     }else if(finalPlacedUnits>0){
       const missing=Math.max(0,totalUnits-finalPlacedUnits);
-      $("runInfo").textContent="Частичный результат · "+committedSheets.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · не размещено: "+missing;
+      const blockedText=blockedInstances.length?(" · заблокировано по габаритам: "+blockedInstances.length):"";
+      $("runInfo").textContent="Частичный результат · "+committedSheets.length+" лист(ов) · "+finalPlacedUnits+"/"+totalUnits+" деталей · не размещено: "+missing+blockedText;
       status("Частичный раскрой");
     }else{
-      $("runInfo").textContent="Не удалось разместить детали на листе.";
-      status("Нет результата");
+      const blockedText=blockedInstances.length?(" "+blockedInstances.length+" деталей не проходят по габаритам листа. "):"";
+      $("runInfo").textContent=blockedText+"Поиск не получил ни одного валидного кандидата. Проверьте диагностику.";
+      status("Нет валидной раскладки");
     }
   }finally{
     try{SvgNest.stop()}catch(_){}
