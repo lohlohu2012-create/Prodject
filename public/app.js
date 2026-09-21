@@ -52,9 +52,11 @@ function adaptiveNestingConfig(orderSize){
     mutationRate,
     batchMs,
     rescueAttempts:orderSize>120?2:3,
-    refillCandidates:6,
-    refillPasses:1,
-    refillSheets:Math.min(4,Math.max(1,Math.ceil(orderSize/40))),
+    // Пустое место на уже открытых листах важнее скорости открытия нового листа.
+    // После частичного кандидата даём алгоритму несколько попыток дозаполнить лист.
+    refillCandidates:Math.min(12,Math.max(8,Math.ceil(orderSize/20))),
+    refillPasses:2,
+    refillSheets:999,
     secondOrientationThreshold:0.72
   };
 }
@@ -1150,13 +1152,40 @@ function instancePackingScore(instance){
 function selectNestingBatch(instances,size,mode="large",skipIds=null){
   const skip=skipIds||new Set();
   const list=(instances||[]).filter(item=>item&&!skip.has(item.instanceId)).slice();
+  const limit=Math.max(1,size);
+
+  if(mode==="mixed"){
+    // В каждом пакете должны присутствовать и крупные, и мелкие детали.
+    // Иначе большой заказ разбивается на «лист крупных» и затем отдельные
+    // листы мелких деталей, хотя мелкие детали могли бы заполнить остаток.
+    const byLarge=list.slice().sort((a,b)=>{
+      const d=instancePackingScore(b)-instancePackingScore(a);
+      return d||(String(a.instanceId).localeCompare(String(b.instanceId)));
+    });
+    const bySmall=list.slice().sort((a,b)=>{
+      const d=instancePackingScore(a)-instancePackingScore(b);
+      return d||(String(a.instanceId).localeCompare(String(b.instanceId)));
+    });
+    const largeCount=Math.max(1,Math.ceil(limit*0.6));
+    const smallCount=Math.max(1,limit-largeCount);
+    const chosen=[];
+    const seen=new Set();
+    const take=arr=>arr.slice(0,limit).forEach(item=>{
+      if(chosen.length>=limit||seen.has(item.instanceId))return;
+      chosen.push(item);seen.add(item.instanceId);
+    });
+    take(byLarge.slice(0,largeCount));
+    take(bySmall.slice(0,smallCount));
+    if(chosen.length<limit)take(byLarge);
+    return chosen;
+  }
+
   list.sort((a,b)=>{
     const sa=instancePackingScore(a),sb=instancePackingScore(b);
     if(mode==="small")return sa-sb;
-    if(mode==="mixed")return (sb-sa)||(String(a.instanceId).length-String(b.instanceId).length);
-    return sb-sa;
+    return (sb-sa)||(String(a.instanceId).localeCompare(String(b.instanceId)));
   });
-  return list.slice(0,Math.max(1,size));
+  return list.slice(0,limit);
 }
 
 function uniqueInstances(list){
@@ -1208,14 +1237,17 @@ function appendFreshResultSheets(target,svgList,usedUnitIds,sheet){
   return accepted;
 }
 
-async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,runDurationMs,runtimeConfig=null){
+async function refillCommittedSheets(committedSheets,remaining,usedUnitIds,allInstances,orientations,runId,runDurationMs,runtimeConfig=null,refillOptions=null){
   let changedAny=false;
   const perf=runtimeConfig||adaptiveNestingConfig(allInstances.length);
-  const maxPasses=perf.refillPasses;
-  const candidateLimit=perf.refillCandidates;
+  const options=refillOptions||{};
+  const maxPasses=Math.max(1,Number(options.maxPasses||perf.refillPasses));
+  const candidateLimit=Math.max(1,Number(options.candidateLimit||perf.refillCandidates));
+  const focusIndexes=Array.isArray(options.focusIndexes)?new Set(options.focusIndexes):null;
   const sheetOrder=committedSheets.map((svg,index)=>({svg,index,count:resultUnitIds(svg).size}))
+    .filter(item=>!focusIndexes||focusIndexes.has(item.index))
     .sort((a,b)=>a.count-b.count)
-    .slice(0,perf.refillSheets);
+    .slice(0,Math.max(1,Number(options.maxSheets||perf.refillSheets)));
 
   for(let pass=0;pass<maxPasses&&state.running;pass++){
     let changedThisPass=false;
@@ -1340,7 +1372,9 @@ async function runSearch(options={}){
   const usedUnitIds=new Set();
   const benchmarkStartedAt=performance.now();
   let remaining=allInstances.slice();
-  let mode="large";
+  // Сразу смешиваем крупные и мелкие детали, чтобы один пакет мог заполнить
+  // свободное место на листе, а не создавать отдельный «лист мелочёвки».
+  let mode="mixed";
   let loopGuard=0;
   let stallRounds=0;
   const deferredIds=new Set();
@@ -1367,8 +1401,33 @@ async function runSearch(options={}){
       $("runInfo").textContent="Основной проход · "+remaining.length+" экземпляров осталось · режим "+(mode==="small"?"дозаполнение":"плотная укладка");
       const candidate=await runPoolAcrossOrientations(pool,orientations,runId,batchRunMs,perf);
 
+      const sheetsBeforeCandidate=committedSheets.length;
       if(candidate?.results?.length){
         appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
+
+        // Критический шаг для плотности: частичный кандидат не считается
+        // окончательным листом. Сразу пытаемся дозаполнить только что открытые
+        // листы оставшимися деталями, пока есть место.
+        const newSheetIndexes=[];
+        for(let si=sheetsBeforeCandidate;si<committedSheets.length;si++)newSheetIndexes.push(si);
+        if(newSheetIndexes.length&&state.running){
+          const localRefill=await refillCommittedSheets(
+            committedSheets,
+            remaining,
+            usedUnitIds,
+            allInstances,
+            orientations,
+            runId,
+            batchRunMs,
+            perf,
+            {
+              focusIndexes:newSheetIndexes,
+              candidateLimit:Math.max(perf.refillCandidates,batchSize),
+              maxPasses:Math.max(2,perf.refillPasses)
+            }
+          );
+          remaining=localRefill.remaining;
+        }
       }
 
       remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
@@ -1438,7 +1497,7 @@ async function runSearch(options={}){
     let extraPass=0;
     while(state.running&&remaining.length&&extraPass++<1){
       const before=usedUnitIds.size;
-      const pool=selectNestingBatch(remaining,Math.min(batchSize,18),extraPass%2?"small":"large");
+      const pool=selectNestingBatch(remaining,Math.min(batchSize,18),"mixed");
       const candidate=await runPoolAcrossOrientations(pool,orientations,runId,Math.max(2200,Math.min(batchRunMs,perf.mode==="max"?4500:3200)),perf);
       if(candidate?.results?.length)appendFreshResultSheets(committedSheets,candidate.results,usedUnitIds,candidate.sheet);
       remaining=remaining.filter(item=>!instanceIsFullyPlaced(item,usedUnitIds));
