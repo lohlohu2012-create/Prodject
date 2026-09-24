@@ -41,7 +41,8 @@
 			fillWeight: 1.2,
 			candidateBudget: 1200,
 			segmentSamples: 1,
-			candidateGrid: 0.05
+			candidateGrid: 0.05,
+			nfpSearchBudgetMs: 250
 		};
 		
 		this.working = false;
@@ -178,6 +179,9 @@
 			}
 			if('candidateGrid' in c && Number.isFinite(parseFloat(c.candidateGrid))){
 				config.candidateGrid = Math.max(0.001, Math.min(10, parseFloat(c.candidateGrid)));
+			}
+			if('nfpSearchBudgetMs' in c && Number.isFinite(parseFloat(c.nfpSearchBudgetMs))){
+				config.nfpSearchBudgetMs = Math.max(20, Math.min(5000, parseInt(c.nfpSearchBudgetMs)));
 			}
 			
 			SvgParser.config({ tolerance: config.curveTolerance});
