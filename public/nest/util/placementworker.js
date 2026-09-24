@@ -53,6 +53,7 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 	this.rotations = rotations;
 	this.config = config;
 	this.nfpCache = nfpCache || {};
+	this.searchTelemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0};
 	
 	// return a placement for the paths/rotations given
 	// happens inside a webworker
@@ -80,6 +81,41 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 		
 		var allplacements = [];
 		var fitness = 0;
+		var telemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0};
+		var candidateBudget = Math.max(64, Number(self.config.candidateBudget || 1200));
+		var segmentSamples = Math.max(0, Math.min(3, Number(self.config.segmentSamples || 1)));
+		function candidateKey(x,y){
+			var q=Math.max(1e-6,Number(self.config.candidateGrid || 0.05));
+			return Math.round(x/q)+":"+Math.round(y/q);
+		}
+		function collectCandidates(polygons, anchor){
+			var out=[], seen=new Set();
+			for(var pi=0;pi<polygons.length;pi++){
+				var poly=polygons[pi];
+				if(!poly||poly.length<2)continue;
+				for(var vi=0;vi<poly.length;vi++){
+					var a=poly[vi], b=poly[(vi+1)%poly.length];
+					var samples=segmentSamples+1;
+					for(var si=0;si<samples;si++){
+						var t=si/Math.max(1,samples-1);
+						var px=a.x+(b.x-a.x)*t-anchor.x;
+						var py=a.y+(b.y-a.y)*t-anchor.y;
+						var key=candidateKey(px,py);
+						if(!seen.has(key)){seen.add(key);out.push({x:px,y:py});telemetry.segmentsSampled++;}
+						if(out.length>=candidateBudget)return out;
+					}
+				}
+			}
+			return out;
+		}
+		function scoreCandidate(x,y,placedBounds,pathBounds){
+			var minX=Math.min(placedBounds.minX,pathBounds.x+x);
+			var minY=Math.min(placedBounds.minY,pathBounds.y+y);
+			var maxX=Math.max(placedBounds.maxX,pathBounds.x+pathBounds.width+x);
+			var maxY=Math.max(placedBounds.maxY,pathBounds.y+pathBounds.height+y);
+			var w=maxX-minX,h=maxY-minY;
+			return w*2+h;
+		}
 		var binarea = Math.abs(GeometryUtil.polygonArea(self.binPolygon));
 		var workerBinBounds = GeometryUtil.getPolygonBounds(self.binPolygon);
 		var key, nfp;
@@ -123,10 +159,17 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 				if(placed.length == 0){
 					// First placement: use a bottom-left anchor in dense mode.
 					var firstScore = null;
-					for(j=0; j<binNfp.length; j++){
-						for(k=0; k<binNfp[j].length; k++){
-							var fx = binNfp[j][k].x-path[0].x;
-							var fy = binNfp[j][k].y-path[0].y;
+					var firstCandidates=collectCandidates(binNfp,path[0]);
+					for(k=0;k<firstCandidates.length;k++){
+							var fx = firstCandidates[k].x;
+							var fy = firstCandidates[k].y;
+							telemetry.candidateChecks++;
+							if(fx < workerBinBounds.x-path[0].x || fy < workerBinBounds.y-path[0].y ||
+								fx+GeometryUtil.getPolygonBounds(path).x+GeometryUtil.getPolygonBounds(path).width > workerBinBounds.x+workerBinBounds.width ||
+								fy+GeometryUtil.getPolygonBounds(path).y+GeometryUtil.getPolygonBounds(path).height > workerBinBounds.y+workerBinBounds.height){
+								telemetry.boundsRejects++; continue;
+							}
+							telemetry.feasibleCandidates++;
 							var score = self.config.densePlacementScoring===false
 								? fx
 								: (fy/Math.max(1,workerBinBounds.height))*10 + (fx/Math.max(1,workerBinBounds.width));
@@ -139,7 +182,6 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 									rotation: path.rotation
 								};
 							}
-						}
 					}
 					
 					if(position){
@@ -274,13 +316,14 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 					var pathBounds=GeometryUtil.getPolygonBounds(path);
 					var pathMinX=pathBounds.x,pathMinY=pathBounds.y;
 					var pathMaxX=pathBounds.x+pathBounds.width,pathMaxY=pathBounds.y+pathBounds.height;
-					for(j=0; j<finalNfp.length; j++){
-						nf=finalNfp[j];
-						if(Math.abs(GeometryUtil.polygonArea(nf))<2)continue;
-						for(k=0; k<nf.length; k++){
+					var placedBounds={minX:placedMinX,minY:placedMinY,maxX:placedMaxX,maxY:placedMaxY};
+					var candidatePoints=collectCandidates(finalNfp,path[0]);
+					for(k=0;k<candidatePoints.length;k++){
+							var cp=candidatePoints[k];
+							telemetry.candidateChecks++;
 							shiftvector={
-								x:nf[k].x-path[0].x,
-								y:nf[k].y-path[0].y,
+								x:cp.x,
+								y:cp.y,
 								id:path.id,
 								rotation:path.rotation,
 								nfp:combinedNfp
@@ -293,6 +336,12 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 								width:Math.max(placedMaxX,shiftedMaxX)-Math.min(placedMinX,shiftedMinX),
 								height:Math.max(placedMaxY,shiftedMaxY)-Math.min(placedMinY,shiftedMinY)
 							};
+							if(shiftedMinX < workerBinBounds.x || shiftedMinY < workerBinBounds.y ||
+								shiftedMinX+pathBounds.width > workerBinBounds.x+workerBinBounds.width ||
+								shiftedMinY+pathBounds.height > workerBinBounds.y+workerBinBounds.height){
+								telemetry.boundsRejects++; continue;
+							}
+							telemetry.feasibleCandidates++;
 							if(self.config.densePlacementScoring===false){
 								area=rectbounds.width*2+rectbounds.height;
 							}else{
@@ -345,7 +394,8 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 		// there were parts that couldn't be placed
 		fitness += 2*paths.length;
 		
-		return {placements: allplacements, fitness: fitness, paths: paths, area: binarea };
+		this.searchTelemetry = telemetry;
+		return {placements: allplacements, fitness: fitness, paths: paths, area: binarea, telemetry: telemetry };
 	};
 
 }
