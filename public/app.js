@@ -1,5 +1,5 @@
 const SHEETNEST_ENGINE_BUILD="20260921-laser-watchdog-v1";
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false,runStage:"Готово",runDeadline:0,runLastProgressAt:0,runWatchdogTimer:null,runWatchdogReason:"",runWatchdogStallMs:15000,runWatchdogLastEvent:"",runWatchdogLastInstanceId:"",runWatchdogLastUnitId:"",runWatchdogLastSheet:0,runWatchdogCandidateChecks:0,runWatchdogNfpChecks:0,runWatchdogNfpTimeouts:0,runWatchdogFeasibleCandidates:0,runWatchdogBoundsRejects:0,runWatchdogCollisionRejects:0,runWatchdogStartedAt:0,runWatchdogState:"idle"};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false,runStage:"Готово",runDeadline:0,runLastProgressAt:0,runWatchdogTimer:null,runWatchdogReason:"",runWatchdogStallMs:15000,runWatchdogLastEvent:"",runWatchdogLastInstanceId:"",runWatchdogLastUnitId:"",runWatchdogLastSheet:0,runWatchdogCandidateChecks:0,runWatchdogNfpChecks:0,runWatchdogNfpTimeouts:0,runWatchdogFeasibleCandidates:0,runWatchdogBoundsRejects:0,runWatchdogCollisionRejects:0,runWatchdogNfpCacheHits:0,runWatchdogNfpCacheMisses:0,runWatchdogBudgetExceeded:0,runWatchdogStartedAt:0,runWatchdogState:"idle"};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -1236,6 +1236,9 @@ function touchRunProgress(eventName="heartbeat",meta={}){
   if(Number.isFinite(Number(meta.feasibleCandidates)))state.runWatchdogFeasibleCandidates=Number(meta.feasibleCandidates);
   if(Number.isFinite(Number(meta.boundsRejects)))state.runWatchdogBoundsRejects=Number(meta.boundsRejects);
   if(Number.isFinite(Number(meta.collisionRejects)))state.runWatchdogCollisionRejects=Number(meta.collisionRejects);
+  if(Number.isFinite(Number(meta.nfpCacheHits)))state.runWatchdogNfpCacheHits=Number(meta.nfpCacheHits);
+  if(Number.isFinite(Number(meta.nfpCacheMisses)))state.runWatchdogNfpCacheMisses=Number(meta.nfpCacheMisses);
+  if(Number.isFinite(Number(meta.budgetExceededCount)))state.runWatchdogBudgetExceeded=Number(meta.budgetExceededCount);
   renderWatchdogPanel();
 }
 function setRunStage(stage,detail=""){state.runStage=stage;touchRunProgress("stage:"+stage);if(state.running){const remaining=Math.max(0,Math.ceil((state.runDeadline-Date.now())/1000));$("runInfo").textContent=detail?stage+" · "+detail+" · "+remaining+" с":stage+" · "+remaining+" с"}}
@@ -1288,7 +1291,9 @@ function renderWatchdogPanel(){
     "<span>Сandidate <b>"+(state.runWatchdogCandidateChecks||0)+"</b></span>"+
     "<span>NFP <b>"+(state.runWatchdogNfpChecks||0)+"</b></span>"+
     "<span>Feasible <b>"+(state.runWatchdogFeasibleCandidates||0)+"</b></span>"+
-    "<span>Timeout <b>"+(state.runWatchdogNfpTimeouts||0)+"</b></span>";
+    "<span>Timeout <b>"+(state.runWatchdogNfpTimeouts||0)+"</b></span>"+
+    "<span>Cache hit <b>"+(state.runWatchdogNfpCacheHits||0)+"</b></span>"+
+    "<span>Budget stop <b>"+(state.runWatchdogBudgetExceeded||0)+"</b></span>";
   if(bar){
     const total=Math.max(1,state.runDeadline-state.startedAt);
     bar.style.width=Math.round(Math.max(0,Math.min(100,(total-left)/total*100)))+"%";
