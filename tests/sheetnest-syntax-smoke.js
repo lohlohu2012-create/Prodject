@@ -23,6 +23,8 @@ assert(index.includes("20260921-stability-pass-v1"),"Cache-busting version is st
 
 const app=read("public/app.js");
 assert(app.includes("startRunWatchdog"),"Global nesting watchdog is missing");
+assert(app.includes("candidateBudget"),"Adaptive candidate budget is missing");
+assert(app.includes("segmentSamples"),"Adaptive segment sampling is missing");
 assert(app.includes("runWatchdogReason"),"Watchdog state is missing");
 assert(app.includes('window.SheetNestDxf?.update?.()'),"DXF button state is not synchronized with app state");
 
@@ -45,5 +47,10 @@ assert(laser.includes("laserTotalTime"),"Laser result integration is missing");
 const svgnest=read("public/nest/svgnest.js");
 assert(svgnest.includes("errorCallback"),"NFP engine error callback is missing");
 assert(svgnest.includes("engineSession"),"NFP worker session isolation is missing");
+assert(svgnest.includes("candidateBudget"),"NFP Search 2.0 candidate budget is missing");
+assert(svgnest.includes("segmentSamples"),"NFP Search 2.0 segment sampling is missing");
+const placement=read("public/nest/util/placementworker.js");
+assert(placement.includes("collectCandidates"),"NFP Search 2.0 candidate collector is missing");
+assert(placement.includes("searchTelemetry"),"NFP Search 2.0 telemetry is missing");
 
 console.log("sheetnest-syntax-smoke: ok");
