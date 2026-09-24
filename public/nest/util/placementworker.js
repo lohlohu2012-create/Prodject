@@ -163,7 +163,9 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 
 			for(i=0; i<paths.length; i++){
 				path = paths[i];
-				
+				searchStartedAt=Date.now();
+				searchBudgetExceeded=false;
+				telemetry.budgetExceeded=false;
 				// inner NFP
 				key = JSON.stringify({A:-1,B:path.id,inside:true,Arotation:0,Brotation:path.rotation});
 				var binNfp = self.nfpCache[key];
