@@ -1,5 +1,5 @@
 const SHEETNEST_ENGINE_BUILD="20260921-laser-watchdog-v1";
-const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false,runStage:"Готово",runDeadline:0,runLastProgressAt:0,runWatchdogTimer:null,runWatchdogReason:"",runWatchdogStallMs:15000};
+const state={sourceSvg:null,customParts:[],libraryParts:[],resultSvgs:[],resultMeta:null,bestResultSvgs:[],bestResultMeta:null,running:false,startedAt:0,durationMs:0,canvasZoom:1,searchFrames:0,bestFrames:0,nestingManifest:null,expectedPartCount:0,lastValidation:null,runId:0,engineAttemptId:0,instanceDiagnostics:{},unitToInstance:{},lastSearchRenderAt:0,lastDiagnosticsRenderAt:0,benchmarkActive:false,runStage:"Готово",runDeadline:0,runLastProgressAt:0,runWatchdogTimer:null,runWatchdogReason:"",runWatchdogStallMs:15000,runWatchdogLastEvent:"",runWatchdogLastInstanceId:"",runWatchdogLastUnitId:"",runWatchdogLastSheet:0,runWatchdogCandidateChecks:0,runWatchdogNfpChecks:0,runWatchdogNfpTimeouts:0,runWatchdogFeasibleCandidates:0,runWatchdogBoundsRejects:0,runWatchdogCollisionRejects:0,runWatchdogStartedAt:0,runWatchdogState:"idle"};
 
 const $=id=>document.getElementById(id);
 const status=value=>{$("status").textContent=value};
@@ -1216,31 +1216,112 @@ function runLimitForOrder(orderSize,mode){
   const extra=Number(orderSize||0)>120?(mode==="max"?60000:30000):Number(orderSize||0)>80?(mode==="max"?30000:15000):0;
   return base+extra;
 }
-function touchRunProgress(){state.runLastProgressAt=Date.now()}
-function setRunStage(stage,detail=""){state.runStage=stage;touchRunProgress();if(state.running){const remaining=Math.max(0,Math.ceil((state.runDeadline-Date.now())/1000));$("runInfo").textContent=detail?stage+" · "+detail+" · "+remaining+" с":stage+" · "+remaining+" с"}}
-function stopRunWatchdog(){if(state.runWatchdogTimer){clearInterval(state.runWatchdogTimer);state.runWatchdogTimer=null}}
+function touchRunProgress(eventName="heartbeat",meta={}){
+  state.runLastProgressAt=Date.now();
+  state.runWatchdogLastEvent=String(eventName||"heartbeat");
+  if(meta.instanceId)state.runWatchdogLastInstanceId=String(meta.instanceId);
+  if(meta.unitId)state.runWatchdogLastUnitId=String(meta.unitId);
+  if(Number.isFinite(Number(meta.sheet)))state.runWatchdogLastSheet=Number(meta.sheet);
+  if(Number.isFinite(Number(meta.candidateChecks)))state.runWatchdogCandidateChecks=Number(meta.candidateChecks);
+  if(Number.isFinite(Number(meta.nfpChecks)))state.runWatchdogNfpChecks=Number(meta.nfpChecks);
+  if(Number.isFinite(Number(meta.nfpTimeouts)))state.runWatchdogNfpTimeouts=Number(meta.nfpTimeouts);
+  if(Number.isFinite(Number(meta.feasibleCandidates)))state.runWatchdogFeasibleCandidates=Number(meta.feasibleCandidates);
+  if(Number.isFinite(Number(meta.boundsRejects)))state.runWatchdogBoundsRejects=Number(meta.boundsRejects);
+  if(Number.isFinite(Number(meta.collisionRejects)))state.runWatchdogCollisionRejects=Number(meta.collisionRejects);
+  renderWatchdogPanel();
+}
+function setRunStage(stage,detail=""){state.runStage=stage;touchRunProgress("stage:"+stage);if(state.running){const remaining=Math.max(0,Math.ceil((state.runDeadline-Date.now())/1000));$("runInfo").textContent=detail?stage+" · "+detail+" · "+remaining+" с":stage+" · "+remaining+" с"}}
+function stopRunWatchdog(){
+  if(state.runWatchdogTimer){clearInterval(state.runWatchdogTimer);state.runWatchdogTimer=null}
+  state.runWatchdogState="idle";
+  renderWatchdogPanel();
+}
+function resetRunWatchdogTelemetry(){
+  state.runWatchdogReason="";
+  state.runWatchdogLastEvent="start";
+  state.runWatchdogLastInstanceId="";
+  state.runWatchdogLastUnitId="";
+  state.runWatchdogLastSheet=0;
+  state.runWatchdogCandidateChecks=0;
+  state.runWatchdogNfpChecks=0;
+  state.runWatchdogNfpTimeouts=0;
+  state.runWatchdogFeasibleCandidates=0;
+  state.runWatchdogBoundsRejects=0;
+  state.runWatchdogCollisionRejects=0;
+  state.runWatchdogStartedAt=Date.now();
+  state.runWatchdogState="running";
+}
+function watchdogStateLabel(){
+  if(state.runWatchdogReason==="global-timeout")return"TIMEOUT";
+  if(state.runWatchdogReason==="stalled")return"STALLED";
+  if(!state.running&&state.runWatchdogState==="completed")return"COMPLETED";
+  if(!state.running)return"STOPPED";
+  return "RUNNING";
+}
+function renderWatchdogPanel(){
+  const panel=$("watchdogPanel");
+  if(!panel)return;
+  const now=Date.now();
+  const left=Math.max(0,state.runDeadline-now);
+  const stall=Math.max(0,now-state.runLastProgressAt);
+  const stateEl=$("watchdogState"),stageEl=$("watchdogStage"),eventEl=$("watchdogEvent");
+  const detailEl=$("watchdogDetail"),bar=$("watchdogBar");
+  if(stateEl){
+    stateEl.textContent=watchdogStateLabel();
+    stateEl.dataset.state=watchdogStateLabel().toLowerCase();
+  }
+  if(stageEl)stageEl.textContent=state.runStage||"Готово";
+  if(eventEl)eventEl.textContent=state.runWatchdogLastEvent||"—";
+  if(detailEl)detailEl.innerHTML=
+    "<span>Instance <b>"+escapeHtml(state.runWatchdogLastInstanceId||"—")+"</b></span>"+
+    "<span>Unit <b>"+escapeHtml(state.runWatchdogLastUnitId||"—")+"</b></span>"+
+    "<span>Лист <b>"+(state.runWatchdogLastSheet||"—")+"</b></span>"+
+    "<span>Кадр <b>"+(state.searchFrames||0)+"</b></span>"+
+    "<span>Сandidate <b>"+(state.runWatchdogCandidateChecks||0)+"</b></span>"+
+    "<span>NFP <b>"+(state.runWatchdogNfpChecks||0)+"</b></span>"+
+    "<span>Feasible <b>"+(state.runWatchdogFeasibleCandidates||0)+"</b></span>"+
+    "<span>Timeout <b>"+(state.runWatchdogNfpTimeouts||0)+"</b></span>";
+  if(bar){
+    const total=Math.max(1,state.runDeadline-state.startedAt);
+    bar.style.width=Math.round(Math.max(0,Math.min(100,(total-left)/total*100)))+"%";
+  }
+  const timer=$("watchdogTimer");
+  if(timer)timer.textContent=state.running?Math.ceil(left/1000)+" с":"—";
+  const stallEl=$("watchdogStall");
+  if(stallEl)stallEl.textContent=Math.round(stall/1000)+" с";
+}
 function startRunWatchdog(runId,limitMs){
   stopRunWatchdog();
   state.runDeadline=Date.now()+Math.max(10000,Number(limitMs)||120000);
   state.runLastProgressAt=Date.now();
-  state.runWatchdogReason="";
+  resetRunWatchdogTelemetry();
   state.runWatchdogTimer=setInterval(()=>{
-    if(!state.running||state.runId!==runId){stopRunWatchdog();return}
+    if(!state.running||state.runId!==runId){
+      if(!state.running&&state.runWatchdogState==="running")state.runWatchdogState="completed";
+      stopRunWatchdog();return;
+    }
     const now=Date.now(),left=state.runDeadline-now,stall=now-state.runLastProgressAt;
     if(left<=0){
       state.runWatchdogReason="global-timeout";
+      state.runWatchdogState="timeout";
       state.running=false;
       state.runId+=1;
-      try{SvgNest.stop()}catch(_){ }
+      try{SvgNest.stop()}catch(_){}
       $("progressBar").style.width="100%";
       $("runInfo").textContent="Остановлено watchdog: превышен общий лимит расчёта";
       status("Расчёт остановлен по таймауту");
+      renderWatchdogPanel();
       stopRunWatchdog();
       return;
     }
     if(stall>state.runWatchdogStallMs&&state.runStage!=="Финализация"){
-      $("runInfo").textContent=state.runStage+" · нет нового результата "+Math.round(stall/1000)+" с · осталось "+Math.ceil(left/1000)+" с";
+      state.runWatchdogState="stalled";
+      state.runWatchdogReason="stalled";
+      $("runInfo").textContent=state.runStage+" · heartbeat отсутствует "+Math.round(stall/1000)+" с · осталось "+Math.ceil(left/1000)+" с";
+    }else if(state.runWatchdogState==="stalled"){
+      state.runWatchdogState="running";state.runWatchdogReason="";
     }
+    renderWatchdogPanel();
   },250);
 }
 function updateProgress(){
