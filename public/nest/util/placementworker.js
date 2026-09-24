@@ -53,7 +53,7 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 	this.rotations = rotations;
 	this.config = config;
 	this.nfpCache = nfpCache || {};
-	this.searchTelemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0};
+	this.searchTelemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0,budgetExceeded:false};
 	
 	// return a placement for the paths/rotations given
 	// happens inside a webworker
@@ -81,31 +81,66 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 		
 		var allplacements = [];
 		var fitness = 0;
-		var telemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0};
+		var telemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0,budgetExceeded:false};
 		var candidateBudget = Math.max(64, Number(self.config.candidateBudget || 1200));
-		var segmentSamples = Math.max(0, Math.min(3, Number(self.config.segmentSamples || 1)));
+		var segmentSamples = Math.max(0, Math.min(6, Number(self.config.segmentSamples || 1)));
 		function candidateKey(x,y){
 			var q=Math.max(1e-6,Number(self.config.candidateGrid || 0.05));
 			return Math.round(x/q)+":"+Math.round(y/q);
 		}
+		var searchStartedAt=Date.now();
+		var searchBudgetMs=Math.max(20,Number(self.config.nfpSearchBudgetMs || 250));
+		var searchBudgetExceeded=false;
+		function searchBudgetHit(){
+			if(searchBudgetExceeded)return true;
+			if(Date.now()-searchStartedAt>=searchBudgetMs){
+				searchBudgetExceeded=true;
+				telemetry.budgetExceeded=true;
+				return true;
+			}
+			return false;
+		}
+		function addCandidate(out,seen,x,y,source){
+			if(!Number.isFinite(x)||!Number.isFinite(y))return;
+			var key=candidateKey(x,y);
+			if(seen.has(key))return;
+			seen.add(key);
+			out.push({x:x,y:y,source:source||"boundary"});
+			telemetry.segmentsSampled++;
+		}
 		function collectCandidates(polygons, anchor){
 			var out=[], seen=new Set();
+			var interiorSamples=Math.max(0,Math.min(6,Number(self.config.segmentSamples||1)));
+			var hardCap=Math.max(64,Number(self.config.candidateBudget||1200))*2;
 			for(var pi=0;pi<polygons.length;pi++){
 				var poly=polygons[pi];
 				if(!poly||poly.length<2)continue;
 				for(var vi=0;vi<poly.length;vi++){
+					if(searchBudgetHit())break;
 					var a=poly[vi], b=poly[(vi+1)%poly.length];
-					var samples=segmentSamples+1;
-					for(var si=0;si<samples;si++){
-						var t=si/Math.max(1,samples-1);
-						var px=a.x+(b.x-a.x)*t-anchor.x;
-						var py=a.y+(b.y-a.y)*t-anchor.y;
-						var key=candidateKey(px,py);
-						if(!seen.has(key)){seen.add(key);out.push({x:px,y:py});telemetry.segmentsSampled++;}
-						if(out.length>=candidateBudget)return out;
+					addCandidate(out,seen,a.x-anchor.x,a.y-anchor.y,"vertex");
+					var count=interiorSamples;
+					for(var si=1;si<=count;si++){
+						if(searchBudgetHit())break;
+						var t=si/(count+1);
+						addCandidate(out,seen,
+							a.x+(b.x-a.x)*t-anchor.x,
+							a.y+(b.y-a.y)*t-anchor.y,
+							"segment");
+						if(out.length>=hardCap)break;
 					}
+					if(out.length>=hardCap)break;
 				}
+				if(searchBudgetHit()||out.length>=hardCap)break;
 			}
+			// Deterministic bottom-left priority keeps the search bounded while
+			// still allowing interior segment points to beat a bad vertex.
+			out.sort(function(a,b){
+				if(!GeometryUtil.almostEqual(a.y,b.y))return a.y-b.y;
+				return a.x-b.x;
+			});
+			var budget=Math.max(64,Number(self.config.candidateBudget||1200));
+			if(out.length>budget)out.length=budget;
 			return out;
 		}
 		function scoreCandidate(x,y,placedBounds,pathBounds){
