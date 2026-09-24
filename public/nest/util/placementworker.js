@@ -53,7 +53,7 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 	this.rotations = rotations;
 	this.config = config;
 	this.nfpCache = nfpCache || {};
-	this.searchTelemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0,budgetExceeded:false};
+	this.searchTelemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0,budgetExceeded:false,budgetExceededCount:0};
 	
 	// return a placement for the paths/rotations given
 	// happens inside a webworker
@@ -81,7 +81,7 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 		
 		var allplacements = [];
 		var fitness = 0;
-		var telemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0,budgetExceeded:false};
+		var telemetry = {candidateChecks:0,boundsRejects:0,collisionRejects:0,feasibleCandidates:0,segmentsSampled:0,budgetExceeded:false,budgetExceededCount:0};
 		var candidateBudget = Math.max(64, Number(self.config.candidateBudget || 1200));
 		var segmentSamples = Math.max(0, Math.min(6, Number(self.config.segmentSamples || 1)));
 		function candidateKey(x,y){
@@ -95,7 +95,7 @@ function PlacementWorker(binPolygon, paths, ids, rotations, config, nfpCache){
 			if(searchBudgetExceeded)return true;
 			if(Date.now()-searchStartedAt>=searchBudgetMs){
 				searchBudgetExceeded=true;
-				telemetry.budgetExceeded=true;
+				telemetry.budgetExceeded=true; telemetry.budgetExceededCount++;
 				return true;
 			}
 			return false;
