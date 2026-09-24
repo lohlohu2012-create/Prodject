@@ -53,6 +53,9 @@ function adaptiveNestingConfig(orderSize){
       refillSheets:999,
       poolMax:local?16:24,
       candidateVariants:q.mode==="max"?4:3,
+      candidateBudget:q.mode==="max"?2400:(q.mode==="fast"?700:1400),
+      segmentSamples:q.mode==="max"?2:1,
+      candidateGrid:q.mode==="max"?0.02:0.05,
       sheetCandidateMs:local?(q.mode==="max"?9000:(q.mode==="fast"?4500:7000)):(q.mode==="max"?7000:(q.mode==="fast"?2800:5200)),
       sheetPenalty:2,
       fillWeight:1.2,
@@ -95,6 +98,9 @@ function adaptiveNestingConfig(orderSize){
     fillWeight:q.mode==="max"?1.7:1.5,
     densePlacementScoring:true,
     secondOrientationThreshold:hugeLocal?0.6:0.72,
+    candidateBudget:q.mode==="max"?(hugeLocal?1400:2200):(hugeLocal?650:1100),
+    segmentSamples:q.mode==="max"?(hugeLocal?1:2):1,
+    candidateGrid:q.mode==="max"?0.03:0.06,
     local
   };
 }
@@ -1401,7 +1407,7 @@ function startOneRun(sheet,runDurationMs,runId,workInstances=null,runtimeConfig=
             $("progressBar").style.width=Math.max(2,Math.round((progress||0)*100))+"%";
           }
         },
-        (svglist,efficiency,placed,total,isBest=false,frame=0)=>{
+        (svglist,efficiency,placed,total,isBest=false,frame=0,searchTelemetry={})=>{
           if(!state.running||runId!==state.runId||attemptId!==state.engineAttemptId)return;
           if(!svglist||!svglist.length)return;
           state.searchFrames++;
