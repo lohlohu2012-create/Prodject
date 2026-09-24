@@ -375,6 +375,7 @@
 			}
 			
 			var nfpPairs = [];
+			var nfpPairTotal = 0;
 			var key;
 			var newCache = {};
 			
@@ -386,9 +387,11 @@
 				}else{
 					newCache[JSON.stringify(key)] = nfpCache[JSON.stringify(key)];
 				}
+				nfpPairTotal++;
 				for(j=0; j<i; j++){
 					var placed = placelist[j];
 					key = {A: placed.id, B: part.id, inside: false, Arotation: rotations[j], Brotation: rotations[i]};
+					nfpPairTotal++;
 					if(!nfpCache[JSON.stringify(key)]){
 						nfpPairs.push({A: placed, B: part, key: key});
 					}
@@ -656,7 +659,7 @@
 					if(sessionId !== engineSession)return;
 					if(shouldDisplay && typeof displayCallback === 'function'){
 						lastDisplayTime = now;
-						displayCallback(self.applyPlacement(bestresult.placements), placedArea/totalArea, numPlacedParts, numParts, isBest, ++displayCounter, {nfpChecks:nfpPairs.length, ...(bestresult.telemetry||{})});
+						displayCallback(self.applyPlacement(bestresult.placements), placedArea/totalArea, numPlacedParts, numParts, isBest, ++displayCounter, {nfpChecks:nfpPairs.length,nfpPairTotal:nfpPairTotal,nfpCacheMisses:nfpPairs.length,nfpCacheHits:Math.max(0,nfpPairTotal-nfpPairs.length), ...(bestresult.telemetry||{})});
 					}
 					self.working = false;
 				}, function (err) {
