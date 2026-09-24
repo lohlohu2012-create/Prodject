@@ -202,6 +202,20 @@
         <div class="progress-wrap"><span class="progress-label">SEARCH</span><div class="progress"><div id="progressBar"></div></div></div>
       </div>
 
+      <section id="watchdogPanel" class="watchdog-panel" aria-live="polite">
+        <div class="watchdog-head">
+          <div>
+            <div class="watchdog-kicker">PRODUCTION WATCHDOG 2.0</div>
+            <h2>Контроль расчёта</h2>
+          </div>
+          <div class="watchdog-state" id="watchdogState" data-state="idle">IDLE</div>
+        </div>
+        <div class="watchdog-stage"><span>Этап</span><strong id="watchdogStage">Готово</strong><em id="watchdogTimer">—</em></div>
+        <div class="watchdog-progress"><div id="watchdogBar"></div></div>
+        <div class="watchdog-metrics" id="watchdogDetail"></div>
+        <div class="watchdog-foot"><span>Heartbeat: <b id="watchdogStall">0 с</b></span><span>Event: <b id="watchdogEvent">—</b></span></div>
+      </section>
+
       <section id="diagnosticsPanel" class="diagnostics-panel" hidden>
         <div class="diagnostics-head">
           <div class="diagnostics-title-wrap">
