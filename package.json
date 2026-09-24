@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/sheetnest-syntax-smoke.js && node tests/watchdog-regression.js"
+    "test": "node tests/sheetnest-syntax-smoke.js && node tests/watchdog-regression.js && node tests/nfp-search-2-regression.js"
   },
   "dependencies": {
     "dxf-parser": "^1.1.2",
