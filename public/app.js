@@ -56,6 +56,7 @@ function adaptiveNestingConfig(orderSize){
       candidateBudget:q.mode==="max"?2400:(q.mode==="fast"?700:1400),
       segmentSamples:q.mode==="max"?2:1,
       candidateGrid:q.mode==="max"?0.02:0.05,
+      nfpSearchBudgetMs:q.mode==="max"?450:(q.mode==="fast"?140:250),
       sheetCandidateMs:local?(q.mode==="max"?9000:(q.mode==="fast"?4500:7000)):(q.mode==="max"?7000:(q.mode==="fast"?2800:5200)),
       sheetPenalty:2,
       fillWeight:1.2,
@@ -101,6 +102,7 @@ function adaptiveNestingConfig(orderSize){
     candidateBudget:q.mode==="max"?(hugeLocal?1400:2200):(hugeLocal?650:1100),
     segmentSamples:q.mode==="max"?(hugeLocal?1:2):1,
     candidateGrid:q.mode==="max"?0.03:0.06,
+    nfpSearchBudgetMs:q.mode==="max"?(hugeLocal?320:420):(hugeLocal?160:240),
     local
   };
 }
