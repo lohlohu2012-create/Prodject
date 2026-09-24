@@ -38,7 +38,10 @@
 			fastPlacementScoring: true,
 			densePlacementScoring: true,
 			sheetPenalty: 2,
-			fillWeight: 1.2
+			fillWeight: 1.2,
+			candidateBudget: 1200,
+			segmentSamples: 1,
+			candidateGrid: 0.05
 		};
 		
 		this.working = false;
@@ -166,6 +169,15 @@
 			}
 			if('fillWeight' in c && Number.isFinite(parseFloat(c.fillWeight))){
 				config.fillWeight = Math.max(0, parseFloat(c.fillWeight));
+			}
+			if('candidateBudget' in c && Number.isFinite(parseFloat(c.candidateBudget))){
+				config.candidateBudget = Math.max(64, Math.min(10000, parseInt(c.candidateBudget)));
+			}
+			if('segmentSamples' in c && Number.isFinite(parseFloat(c.segmentSamples))){
+				config.segmentSamples = Math.max(0, Math.min(3, parseInt(c.segmentSamples)));
+			}
+			if('candidateGrid' in c && Number.isFinite(parseFloat(c.candidateGrid))){
+				config.candidateGrid = Math.max(0.001, Math.min(10, parseFloat(c.candidateGrid)));
 			}
 			
 			SvgParser.config({ tolerance: config.curveTolerance});
@@ -640,7 +652,7 @@
 					if(sessionId !== engineSession)return;
 					if(shouldDisplay && typeof displayCallback === 'function'){
 						lastDisplayTime = now;
-						displayCallback(self.applyPlacement(bestresult.placements), placedArea/totalArea, numPlacedParts, numParts, isBest, ++displayCounter);
+						displayCallback(self.applyPlacement(bestresult.placements), placedArea/totalArea, numPlacedParts, numParts, isBest, ++displayCounter, {nfpChecks:nfpPairs.length, ...(bestresult.telemetry||{})});
 					}
 					self.working = false;
 				}, function (err) {
