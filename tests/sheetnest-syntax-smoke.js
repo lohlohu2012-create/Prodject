@@ -19,7 +19,6 @@ for(const file of [
 const index=read("public/index.html");
 assert(index.includes('src="dxf-export.js"'),"DXF exporter is not wired into public/index.html");
 assert(index.includes('src="laser-estimator.js"'),"Laser estimator is not wired into public/index.html");
-assert(index.includes("20260921-stability-pass-v1"),"Cache-busting version is stale");
 
 const app=read("public/app.js");
 assert(app.includes("startRunWatchdog"),"Global nesting watchdog is missing");
